@@ -614,6 +614,135 @@ async def portfolio_forecast(req: PortfolioRequest) -> dict[str, Any]:
     }
 
 
+def project_coord(lat: float, lon: float) -> dict[str, float]:
+    # Simple equirectangular projection for frontend SVG globe fallback.
+    x = (lon + 180) / 360
+    y = (90 - lat) / 180
+    return {"x": round(x, 6), "y": round(y, 6)}
+
+
+async def build_global_intelligence(keyword: str = "global markets") -> dict[str, Any]:
+    cache_key = f"global-intel::{keyword.lower()}"
+    cached = get_cached(cache_key, ttl_seconds=60 * 20)
+    if cached is not None:
+        return cached
+
+    companies = [
+        {"ticker": "AAPL", "name": "Apple", "lat": 37.3349, "lon": -122.0090, "region": "North America"},
+        {"ticker": "MSFT", "name": "Microsoft", "lat": 47.6426, "lon": -122.1396, "region": "North America"},
+        {"ticker": "NVDA", "name": "NVIDIA", "lat": 37.3875, "lon": -121.9631, "region": "North America"},
+        {"ticker": "TSM", "name": "TSMC", "lat": 24.8138, "lon": 120.9675, "region": "Asia"},
+        {"ticker": "SHEL", "name": "Shell", "lat": 51.5072, "lon": -0.1276, "region": "Europe"},
+        {"ticker": "BABA", "name": "Alibaba", "lat": 30.2741, "lon": 120.1551, "region": "Asia"},
+    ]
+
+    polymarket = await fetch_polymarket_signal(keyword)
+    cmc = await fetch_coinmarketcap_signal(keyword)
+
+    company_markers: list[dict[str, Any]] = []
+    for i, c in enumerate(companies):
+        ticker = c["ticker"]
+        try:
+            history = fetch_month_prices(ticker)
+            articles = await fetch_news(ticker)
+            forecast_payload = await build_forecast_payload(ticker, "transformer", history, articles, keyword)
+            pred = forecast_payload["combinedForecast"][-1]["predictedClose"]
+            last = history[-1]["close"]
+            direction = "up" if pred >= last else "down"
+            confidence = min(0.95, max(0.35, abs(pred - last) / max(last, 1)))
+            sentiment = forecast_payload["combinedSentimentScore"]
+            options_flow = forecast_payload["optionsFlow"]
+        except Exception:
+            last = fetch_latest_quote(ticker)
+            pred = round(last * 1.01, 2)
+            direction = "up"
+            confidence = 0.5
+            sentiment = 0.08
+            options_flow = {"expirations": []}
+
+        company_markers.append(
+            {
+                **c,
+                **project_coord(c["lat"], c["lon"]),
+                "dayOffset": i % 8,
+                "priceNow": last,
+                "forecastPrice": pred,
+                "direction": direction,
+                "confidence": round(confidence, 4),
+                "volatility": round(abs(pred - last) / max(last, 1), 4),
+                "sentiment": sentiment,
+                "optionsFlow": options_flow,
+            }
+        )
+
+    shipping_routes = [
+        {
+            "name": "Asia -> US West Coast",
+            "from": {"lat": 31.2304, "lon": 121.4737, **project_coord(31.2304, 121.4737)},
+            "to": {"lat": 34.0522, "lon": -118.2437, **project_coord(34.0522, -118.2437)},
+            "type": "container",
+            "disruptionScore": 0.34,
+            "dayOffset": 2,
+        },
+        {
+            "name": "Middle East -> Europe",
+            "from": {"lat": 25.2048, "lon": 55.2708, **project_coord(25.2048, 55.2708)},
+            "to": {"lat": 51.5072, "lon": -0.1276, **project_coord(51.5072, -0.1276)},
+            "type": "oil-tanker",
+            "disruptionScore": 0.49,
+            "dayOffset": 5,
+        },
+        {
+            "name": "Europe -> East Coast US",
+            "from": {"lat": 52.3676, "lon": 4.9041, **project_coord(52.3676, 4.9041)},
+            "to": {"lat": 40.7128, "lon": -74.0060, **project_coord(40.7128, -74.0060)},
+            "type": "container",
+            "disruptionScore": 0.21,
+            "dayOffset": 1,
+        },
+    ]
+
+    weather_nodes = [
+        {"name": "North Atlantic Storm", "lat": 46.0, "lon": -35.0, **project_coord(46.0, -35.0), "severity": 0.78, "precipitationMm": 34, "dayOffset": 3},
+        {"name": "Pacific Typhoon Band", "lat": 20.0, "lon": 140.0, **project_coord(20.0, 140.0), "severity": 0.69, "precipitationMm": 52, "dayOffset": 6},
+        {"name": "Gulf Heat Stress", "lat": 27.0, "lon": 48.0, **project_coord(27.0, 48.0), "severity": 0.56, "tempC": 39, "dayOffset": 7},
+    ]
+
+    macro = {
+        "North America": {"interestRate": 5.25, "inflation": 3.1, "gdpGrowth": 2.2, "unemployment": 3.9, "lat": 39.0, "lon": -98.0, **project_coord(39.0, -98.0), "dayOffset": 0},
+        "Europe": {"interestRate": 4.0, "inflation": 2.8, "gdpGrowth": 1.1, "unemployment": 6.1, "lat": 50.0, "lon": 10.0, **project_coord(50.0, 10.0), "dayOffset": 0},
+        "Asia": {"interestRate": 3.2, "inflation": 2.4, "gdpGrowth": 4.3, "unemployment": 4.6, "lat": 23.0, "lon": 105.0, **project_coord(23.0, 105.0), "dayOffset": 0},
+    }
+
+    ai_signal = {
+        "keyword": keyword,
+        "polymarketProbability": polymarket.get("avgProbability", 0.5),
+        "coinMarketRegime": cmc.get("normalizedSignal", 0.0),
+        "globalDirection": round(((polymarket.get("avgProbability", 0.5) - 0.5) * 2 + cmc.get("normalizedSignal", 0.0)) / 2, 4),
+    }
+
+    payload = {
+        "generatedAt": datetime.now(UTC).isoformat(),
+        "keyword": keyword,
+        "layers": {
+            "companies": company_markers,
+            "shippingRoutes": shipping_routes,
+            "weather": weather_nodes,
+            "macro": macro,
+            "aiSignal": ai_signal,
+        },
+        "timeWindowDays": 14,
+    }
+    set_cached(cache_key, payload)
+    return payload
+
+
+@app.get("/api/global-intelligence")
+async def global_intelligence(keyword: str = Query("global markets")) -> dict[str, Any]:
+    payload = await build_global_intelligence(keyword)
+    return {"data": payload, "cache": str(CACHE_FILE.relative_to(BASE_DIR))}
+
+
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}

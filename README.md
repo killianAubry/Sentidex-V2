@@ -4,29 +4,25 @@
 
 - **Polymarket signal integration** using keyword search (e.g. `oil`, `interest rates`, `AAPL`) to derive odds-weighted forecast influence.
 - **CoinMarketCap signal integration** (or fallback) to incorporate crypto risk-on/risk-off pressure into valuation forecasts.
-- **Source-combination overlays** on the main chart so users can estimate valuation under specific source subsets (e.g. AlphaVantage only, Polymarket+CMC, or all).
-- **Local cache store** for external data calls to reduce API usage and avoid over-polling (`backend/data/external_cache.json`).
+- **Source-combination overlays** on the main chart so users can estimate valuation under specific source subsets.
+- **Local cache store** for external data calls to reduce API usage (`backend/data/external_cache.json`).
+- **Global Market Intelligence Globe tab** with 3D-style interactive globe layers (implemented with an SVG globe in the current UI stack).
 
-## Main UX
+## Globe tab capabilities
 
-1. Top lookup bar for adding tickers and setting a keyword for Polymarket/CMC context.
-2. Horizontal popular ticker cards with quote snapshots.
-3. Main portfolio valuation chart with selectable source overlays via dropdown.
-4. Portfolio page with sortable positions by forecast outcome and per-stock drilldown chart.
+- Company & market location markers with AI sentiment, forecast, confidence, and volatility.
+- Shipping route overlays with disruption scoring.
+- Weather risk overlays (storm/heat nodes).
+- Regional macro overlays (rates, inflation, growth, unemployment).
+- AI global signal panel combining Polymarket + CoinMarketCap effects.
+- Layer toggles and time slider to animate day-by-day conditions.
 
 ## API highlights
 
 - `GET /api/forecast?ticker=AAPL&keyword=oil&selected_sources=AlphaVantage,Polymarket`
 - `GET /api/quotes/popular`
-- `POST /api/portfolio/forecast` with body:
-
-```json
-{
-  "positions": [{ "ticker": "AAPL", "shares": 4 }],
-  "sentiment_model": "transformer",
-  "keyword": "interest rates"
-}
-```
+- `POST /api/portfolio/forecast`
+- `GET /api/global-intelligence?keyword=interest%20rates`
 
 ## Run backend
 

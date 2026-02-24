@@ -3,4 +3,3 @@ __pycache__/
 backend/.venv/
 frontend/node_modules/
 backend/data/*.json
-backend/.env

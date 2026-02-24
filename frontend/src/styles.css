@@ -6,7 +6,6 @@
 
 body { margin: 0; background: #f8fafc; }
 .minimal-dashboard { max-width: 1360px; margin: 0 auto; padding: 20px; display: grid; gap: 14px; }
-
 .topbar { display: grid; grid-template-columns: 140px 1fr auto; gap: 10px; align-items: center; }
 .brand { font-weight: 700; font-size: 1.2rem; }
 .lookup-row { display: flex; gap: 8px; }
@@ -22,7 +21,6 @@ button.active { background: #0f172a; color: #fff; }
 
 .card { background: #fff; border: 1px solid #e2e8f0; border-radius: 14px; padding: 14px; }
 .chart-card { display: grid; place-items: center; }
-
 .popular-row { display: grid; grid-template-columns: repeat(8, minmax(110px, 1fr)); gap: 10px; }
 .ticker-card { background: #fff; border: 1px solid #e2e8f0; border-radius: 12px; padding: 10px; cursor: pointer; }
 .ticker-card h4, .ticker-card p { margin: 0; }
@@ -36,6 +34,11 @@ button.active { background: #0f172a; color: #fff; }
 .portfolio-list { display: grid; gap: 8px; align-content: start; }
 .position-btn { width: 100%; text-align: left; display: flex; justify-content: space-between; align-items: center; background: #f8fafc; }
 .row-between { display: flex; justify-content: space-between; align-items: center; }
+
+.globe-wrap { display: grid; gap: 10px; }
+.globe-svg { width: 100%; border: 1px solid #e2e8f0; border-radius: 12px; background: #f8fafc; }
+.layer-toggles { display: flex; gap: 12px; flex-wrap: wrap; }
+.ai-signal, .marker-detail { margin-top: 8px; }
 
 @media (max-width: 1200px) {
   .topbar { grid-template-columns: 1fr; }
