@@ -1,176 +1,207 @@
-import { useMemo, useState } from 'react'
-import {
-  Chart,
-  ChartCanvas,
-  LineSeries,
-  XAxis,
-  YAxis,
-  discontinuousTimeScaleProviderBuilder,
-  MouseCoordinateX,
-  MouseCoordinateY,
-  CrossHairCursor,
-} from 'react-financial-charts'
-import { timeFormat } from 'd3-time-format'
-import { format } from 'd3-format'
+import { useEffect, useMemo, useState } from 'react'
+import { ChartCanvas, Chart } from 'react-stockcharts'
+import { LineSeries } from 'react-stockcharts/lib/series'
+import { XAxis, YAxis } from 'react-stockcharts/lib/axes'
+import { CrossHairCursor, MouseCoordinateX, MouseCoordinateY } from 'react-stockcharts/lib/coordinates'
+import { discontinuousTimeScaleProvider } from 'react-stockcharts/lib/scale'
 
-function buildSeries(history = [], forecast = []) {
+const STORAGE_KEY = 'sentidex-portfolio-v1'
+
+const emptyPortfolio = [
+  { ticker: 'AAPL', shares: 4 },
+  { ticker: 'MSFT', shares: 2 },
+  { ticker: 'NVDA', shares: 1 },
+]
+
+function normalizeSeries(history, forecast, valueKey = 'close') {
   return [
-    ...history.map((x) => ({ date: new Date(x.date), close: x.close, kind: 'history' })),
-    ...forecast.map((x) => ({ date: new Date(x.date), close: x.predictedClose, kind: 'forecast' })),
+    ...history.map((x) => ({ date: new Date(x.date), value: x[valueKey] })),
+    ...forecast.map((x) => ({ date: new Date(x.date), value: x[valueKey] })),
   ]
 }
 
-function StockCenterChart({ history, combinedForecast, transformerForecast, selectedOutletForecast, mode, showTransformer }) {
-  const chartData = useMemo(() => {
-    const outletSeries = mode === 'outlet' ? selectedOutletForecast : combinedForecast
-    return buildSeries(history, outletSeries)
-  }, [history, combinedForecast, selectedOutletForecast, mode])
+function MinimalStockChart({ title, history = [], forecast = [], valueKey = 'close' }) {
+  const data = useMemo(() => normalizeSeries(history, forecast, valueKey), [history, forecast, valueKey])
 
-  if (!chartData.length) return <div className="panel">No chart data yet.</div>
+  if (!data.length) return <div className="card">No data available.</div>
 
-  const xScaleProvider = discontinuousTimeScaleProviderBuilder().inputDateAccessor((d) => d.date)
-  const { data, xScale, xAccessor, displayXAccessor } = xScaleProvider(chartData)
-  const transformer = showTransformer ? buildSeries(history, transformerForecast) : []
-  const txScaled = transformer.length ? xScaleProvider(transformer).data : []
+  const xScaleProvider = discontinuousTimeScaleProvider.inputDateAccessor((d) => d.date)
+  const { data: chartData, xScale, xAccessor, displayXAccessor } = xScaleProvider(data)
 
   return (
-    <div className="panel chart-panel">
-      <h2>Price + Forecast</h2>
-      <ChartCanvas height={460} width={900} ratio={1} margin={{ left: 60, right: 60, top: 20, bottom: 30 }}
-        data={data} seriesName="Price" xScale={xScale} xAccessor={xAccessor} displayXAccessor={displayXAccessor}>
-        <Chart id={1} yExtents={(d) => d.close}>
-          <XAxis />
-          <YAxis />
-          <MouseCoordinateX displayFormat={timeFormat('%Y-%m-%d')} />
-          <MouseCoordinateY displayFormat={format('.2f')} />
-          <LineSeries yAccessor={(d) => d.close} strokeStyle="#22d3ee" />
-          {showTransformer && txScaled.length > 0 && (
-            <LineSeries data={txScaled} yAccessor={(d) => d.close} strokeStyle="#f59e0b" />
-          )}
+    <section className="card chart-card">
+      <h2>{title}</h2>
+      <ChartCanvas
+        width={980}
+        height={440}
+        ratio={1}
+        margin={{ left: 50, right: 50, top: 20, bottom: 30 }}
+        data={chartData}
+        seriesName={title}
+        xScale={xScale}
+        xAccessor={xAccessor}
+        displayXAccessor={displayXAccessor}
+      >
+        <Chart id={1} yExtents={(d) => d.value}>
+          <XAxis axisAt="bottom" orient="bottom" />
+          <YAxis axisAt="left" orient="left" />
+          <MouseCoordinateX />
+          <MouseCoordinateY />
+          <LineSeries yAccessor={(d) => d.value} stroke="#0ea5e9" />
         </Chart>
         <CrossHairCursor />
       </ChartCanvas>
-      <p className="muted">Cyan line = selected sentiment forecast. Amber line = transformer forecast.</p>
-    </div>
+    </section>
   )
 }
 
 export function App() {
-  const [ticker, setTicker] = useState('AAPL')
-  const [response, setResponse] = useState(null)
+  const [page, setPage] = useState('dashboard')
+  const [queryTicker, setQueryTicker] = useState('AAPL')
+  const [popular, setPopular] = useState([])
+  const [portfolio, setPortfolio] = useState(emptyPortfolio)
+  const [portfolioData, setPortfolioData] = useState(null)
+  const [selectedPortfolioTicker, setSelectedPortfolioTicker] = useState('')
+  const [sortMode, setSortMode] = useState('best')
   const [loading, setLoading] = useState(false)
-  const [error, setError] = useState('')
 
-  const [mode, setMode] = useState('combined')
-  const [sentimentModel, setSentimentModel] = useState('transformer')
-  const [selectedOutlet, setSelectedOutlet] = useState('')
-  const [showTransformer, setShowTransformer] = useState(true)
-  const [showMacro, setShowMacro] = useState(true)
-  const [showEarnings, setShowEarnings] = useState(true)
-  const [showOptionsFlow, setShowOptionsFlow] = useState(true)
+  useEffect(() => {
+    const raw = localStorage.getItem(STORAGE_KEY)
+    if (raw) {
+      try {
+        const parsed = JSON.parse(raw)
+        if (Array.isArray(parsed) && parsed.length) setPortfolio(parsed)
+      } catch {
+        // ignore malformed local state
+      }
+    }
+  }, [])
 
-  const outlets = useMemo(() => {
-    if (!response) return []
-    return Object.keys(response.data.perOutletForecast)
-  }, [response])
+  useEffect(() => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(portfolio))
+  }, [portfolio])
 
-  const data = response?.data
-  const history = data?.historicalPrices || []
-  const combinedForecast = data?.combinedForecast || []
-  const transformerForecast = data?.transformerForecast || []
-  const selectedOutletForecast = selectedOutlet ? data?.perOutletForecast?.[selectedOutlet]?.nextWeekForecast || [] : []
+  useEffect(() => {
+    fetch('/api/quotes/popular')
+      .then((r) => r.json())
+      .then((json) => setPopular(json.quotes || []))
+      .catch(() => setPopular([]))
+  }, [])
 
-  async function onSubmit(e) {
-    e.preventDefault()
+  async function refreshPortfolioForecast() {
     setLoading(true)
-    setError('')
     try {
-      const r = await fetch(`/api/forecast?ticker=${encodeURIComponent(ticker)}&sentiment_model=${sentimentModel}`)
-      if (!r.ok) throw new Error(`Forecast request failed (${r.status})`)
-      const json = await r.json()
-      setResponse(json)
-      const firstOutlet = Object.keys(json.data.perOutletForecast)[0]
-      setSelectedOutlet(firstOutlet || '')
-    } catch (err) {
-      setError(err.message)
+      const res = await fetch('/api/portfolio/forecast', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ positions: portfolio, sentiment_model: 'transformer' }),
+      })
+      const json = await res.json()
+      setPortfolioData(json)
+      const first = json?.positions?.[0]?.ticker
+      if (first && !selectedPortfolioTicker) setSelectedPortfolioTicker(first)
     } finally {
       setLoading(false)
     }
   }
 
+  useEffect(() => {
+    if (portfolio.length) refreshPortfolioForecast()
+  }, [portfolio])
+
+  async function addTicker() {
+    const ticker = queryTicker.trim().toUpperCase()
+    if (!ticker) return
+    if (portfolio.some((p) => p.ticker === ticker)) return
+    setPortfolio((prev) => [...prev, { ticker, shares: 1 }])
+  }
+
+  const sortedPositions = useMemo(() => {
+    const list = [...(portfolioData?.positions || [])]
+    if (sortMode === 'best') {
+      list.sort((a, b) => b.forecastDeltaPct - a.forecastDeltaPct)
+    } else if (sortMode === 'worst') {
+      list.sort((a, b) => a.forecastDeltaPct - b.forecastDeltaPct)
+    } else {
+      list.sort((a, b) => a.ticker.localeCompare(b.ticker))
+    }
+    return list
+  }, [portfolioData, sortMode])
+
+  const selectedPosition = sortedPositions.find((x) => x.ticker === selectedPortfolioTicker)
+
   return (
-    <main className="dashboard">
-      <header className="panel">
-        <h1>Sentidex Pro Terminal</h1>
-        <form className="toolbar" onSubmit={onSubmit}>
-          <input value={ticker} onChange={(e) => setTicker(e.target.value.toUpperCase())} placeholder="Ticker" />
-          <select value={sentimentModel} onChange={(e) => setSentimentModel(e.target.value)}>
-            <option value="transformer">Transformer sentiment</option>
-            <option value="lexicon">Lexicon sentiment</option>
-          </select>
-          <button type="submit" disabled={loading}>{loading ? 'Running...' : 'Run Forecast'}</button>
-        </form>
-        {error && <p className="error">{error}</p>}
+    <main className="minimal-dashboard">
+      <header className="topbar">
+        <div className="brand">Sentidex</div>
+        <div className="lookup">
+          <input value={queryTicker} onChange={(e) => setQueryTicker(e.target.value.toUpperCase())} placeholder="Lookup ticker" />
+          <button onClick={addTicker}>Add to portfolio</button>
+          <button onClick={refreshPortfolioForecast} disabled={loading}>{loading ? 'Refreshing...' : 'Run Forecast'}</button>
+        </div>
+        <nav>
+          <button className={page === 'dashboard' ? 'active' : ''} onClick={() => setPage('dashboard')}>Dashboard</button>
+          <button className={page === 'portfolio' ? 'active' : ''} onClick={() => setPage('portfolio')}>Portfolio View</button>
+        </nav>
       </header>
 
-      <section className="layout">
-        <aside className="panel side">
-          <h3>Forecast Controls</h3>
-          <label><input type="radio" checked={mode === 'combined'} onChange={() => setMode('combined')} /> Combined sentiment</label>
-          <label><input type="radio" checked={mode === 'outlet'} onChange={() => setMode('outlet')} /> By outlet</label>
-          {mode === 'outlet' && (
-            <select value={selectedOutlet} onChange={(e) => setSelectedOutlet(e.target.value)}>
-              {outlets.map((outlet) => <option key={outlet}>{outlet}</option>)}
-            </select>
-          )}
-          <hr />
-          <h3>Feature Toggles</h3>
-          <label><input type="checkbox" checked={showTransformer} onChange={() => setShowTransformer((v) => !v)} /> Transformer forecast overlay</label>
-          <label><input type="checkbox" checked={showMacro} onChange={() => setShowMacro((v) => !v)} /> Macro panel</label>
-          <label><input type="checkbox" checked={showEarnings} onChange={() => setShowEarnings((v) => !v)} /> Earnings panel</label>
-          <label><input type="checkbox" checked={showOptionsFlow} onChange={() => setShowOptionsFlow((v) => !v)} /> Options flow panel</label>
-        </aside>
-
-        <StockCenterChart
-          history={history}
-          combinedForecast={combinedForecast}
-          transformerForecast={transformerForecast}
-          selectedOutletForecast={selectedOutletForecast}
-          mode={mode}
-          showTransformer={showTransformer}
-        />
-
-        <aside className="panel side right">
-          <h3>Providers Used</h3>
-          <ul>{(data?.newsProvidersUsed || []).map((x) => <li key={x}>{x}</li>)}</ul>
-
-          {showMacro && data?.macroData && (
-            <div>
-              <h3>Macro</h3>
-              <pre>{JSON.stringify(data.macroData, null, 2)}</pre>
-            </div>
-          )}
-
-          {showEarnings && data?.earningsData && (
-            <div>
-              <h3>Earnings</h3>
-              <pre>{JSON.stringify(data.earningsData, null, 2)}</pre>
-            </div>
-          )}
-
-          {showOptionsFlow && data?.optionsFlow && (
-            <div>
-              <h3>Options Flow</h3>
-              <pre>{JSON.stringify(data.optionsFlow, null, 2)}</pre>
-            </div>
-          )}
-        </aside>
+      <section className="popular-row">
+        {popular.map((q) => (
+          <article key={q.ticker} className="ticker-card" onClick={() => setQueryTicker(q.ticker)}>
+            <h4>{q.ticker}</h4>
+            <p>${q.price}</p>
+          </article>
+        ))}
       </section>
 
-      {response && (
-        <section className="panel">
-          <h3>Generated JSON files</h3>
-          <pre>{JSON.stringify(response.files, null, 2)}</pre>
+      {page === 'dashboard' ? (
+        <>
+          <MinimalStockChart
+            title="Portfolio valuation (historical + forecast)"
+            history={portfolioData?.portfolioValuation?.history || []}
+            forecast={portfolioData?.portfolioValuation?.forecast || []}
+            valueKey="value"
+          />
+          <section className="card stats-grid">
+            <div>
+              <h4>Current Portfolio Value</h4>
+              <p>${portfolioData?.portfolioValuation?.currentValue ?? '-'}</p>
+            </div>
+            <div>
+              <h4>Expected Week-End Value</h4>
+              <p>${portfolioData?.portfolioValuation?.forecastWeekEndValue ?? '-'}</p>
+            </div>
+            <div>
+              <h4>Positions</h4>
+              <p>{portfolio.length}</p>
+            </div>
+          </section>
+        </>
+      ) : (
+        <section className="portfolio-layout">
+          <aside className="card portfolio-list">
+            <div className="row-between">
+              <h3>Positions</h3>
+              <select value={sortMode} onChange={(e) => setSortMode(e.target.value)}>
+                <option value="best">Best forecast</option>
+                <option value="worst">Worst forecast</option>
+                <option value="alpha">A-Z</option>
+              </select>
+            </div>
+            {sortedPositions.map((p) => (
+              <button key={p.ticker} className="position-btn" onClick={() => setSelectedPortfolioTicker(p.ticker)}>
+                <span>{p.ticker} ({p.shares} sh)</span>
+                <strong>{p.forecastDeltaPct}%</strong>
+              </button>
+            ))}
+          </aside>
+
+          <MinimalStockChart
+            title={selectedPosition ? `${selectedPosition.ticker} individual chart` : 'Select a stock'}
+            history={selectedPosition?.historicalPrices || []}
+            forecast={(selectedPosition?.combinedForecast || []).map((x) => ({ ...x, close: x.predictedClose }))}
+            valueKey="close"
+          />
         </section>
       )}
     </main>

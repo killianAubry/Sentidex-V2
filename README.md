@@ -1,26 +1,23 @@
-# Sentidex V2 - Advanced Stock Intelligence Dashboard
+# Sentidex V2 - Minimalist Portfolio Forecast Dashboard
 
-This app now includes:
+## What changed
 
-- **Multi-source news ingestion** (free-tier capable API providers):
-  - NewsAPI (`NEWS_API_KEY`)
-  - GNews (`GNEWS_API_KEY`)
-  - Finnhub (`FINNHUB_API_KEY`)
-  - Alpha Vantage (`ALPHAVANTAGE_API_KEY`)
-- **Sentiment engine choices**:
-  - Transformer sentiment (FinBERT, falls back if unavailable)
-  - Lexicon sentiment
-- **Forecasting tracks**:
-  - Per-outlet sentiment 1-week projection
-  - Combined sentiment 1-week projection
-  - Transformer time-series 1-week projection
-- **Additional datasets**:
-  - Earnings data (via yfinance)
-  - Macro data (FRED if `FRED_API_KEY` exists, fallback snapshot otherwise)
-  - Options flow summary (put/call volume + open interest)
-- **Comprehensive dashboard toggles** with center chart using **react-financial-charts** (React stock chart component family).
+- Modern minimalist dashboard redesign
+- Uses **react-stockcharts** for the center charting experience
+- Top lookup bar to add symbols to a locally stored portfolio
+- Horizontal popular tickers row with live-ish quote cards
+- Portfolio valuation chart (historical + one-week forecast) on startup
+- Dedicated portfolio page with sortable forecast outcomes
+- Click any portfolio stock to inspect an individual chart
 
-## Backend setup
+## Backend features
+
+- `/api/forecast` for single ticker enriched forecast data
+- `/api/quotes/popular` for quick card quotes
+- `/api/portfolio/forecast` to aggregate portfolio valuation and projected week-end value
+- Multi-provider news + sentiment + transformer/lexicon options from prior iteration
+
+## Run backend
 
 ```bash
 cd backend
@@ -30,7 +27,7 @@ pip install -r requirements.txt
 uvicorn app.main:app --reload --port 8000
 ```
 
-## Frontend setup
+## Run frontend
 
 ```bash
 cd frontend
@@ -39,13 +36,3 @@ npm run dev
 ```
 
 Open `http://localhost:5173`.
-
-## API output files
-
-`GET /api/forecast?ticker=AAPL` writes:
-
-1. `*_past_month_prices.json`
-2. `*_per_outlet_predictions.json`
-3. `*_dashboard_chart_data.json`
-
-All under `backend/data/`.

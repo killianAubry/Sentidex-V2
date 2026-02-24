@@ -13,6 +13,7 @@ import numpy as np
 import yfinance as yf
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel, Field
 
 BASE_DIR = Path(__file__).resolve().parents[1]
 DATA_DIR = BASE_DIR / "data"
@@ -61,6 +62,18 @@ NEGATIVE_WORDS = {
 
 def save_json(path: Path, payload: dict[str, Any]) -> None:
     path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+
+def fetch_latest_quote(ticker: str) -> float:
+    stock = yf.Ticker(ticker)
+    fast_info = getattr(stock, "fast_info", {})
+    last_price = fast_info.get("lastPrice") if isinstance(fast_info, dict) else None
+    if last_price is None:
+        hist = stock.history(period="5d", interval="1d")
+        if hist.empty:
+            raise HTTPException(status_code=404, detail=f"No quote found for {ticker}")
+        last_price = float(hist["Close"].dropna().iloc[-1])
+    return round(float(last_price), 2)
 
 
 def fetch_month_prices(ticker: str) -> list[dict[str, Any]]:
@@ -410,11 +423,7 @@ def fetch_options_flow(ticker: str) -> dict[str, Any]:
     return {"expirations": data}
 
 
-@app.get("/api/forecast")
-async def forecast(ticker: str = Query(..., min_length=1, max_length=10), sentiment_model: str = Query("transformer")) -> dict[str, Any]:
-    ticker = ticker.upper().strip()
-    history = fetch_month_prices(ticker)
-    articles = await fetch_news(ticker)
+def build_forecast_payload(ticker: str, sentiment_model: str, history: list[dict[str, Any]], articles: list[dict[str, Any]]) -> dict[str, Any]:
     sentiments = sentiment_by_outlet(articles, mode=sentiment_model)
 
     per_outlet: dict[str, Any] = {}
@@ -434,12 +443,10 @@ async def forecast(ticker: str = Query(..., min_length=1, max_length=10), sentim
     transformer_forecast = transformer_week_forecast(history)
     earnings = fetch_earnings_data(ticker)
     options_flow = fetch_options_flow(ticker)
-    macro = await fetch_macro_data()
 
-    now = datetime.now(UTC)
-    payload = {
+    return {
         "ticker": ticker,
-        "generatedAt": now.isoformat(),
+        "generatedAt": datetime.now(UTC).isoformat(),
         "historicalPrices": history,
         "perOutletForecast": per_outlet,
         "combinedSentimentScore": round(combined_score, 4),
@@ -447,17 +454,36 @@ async def forecast(ticker: str = Query(..., min_length=1, max_length=10), sentim
         "transformerForecast": transformer_forecast,
         "earningsData": earnings,
         "optionsFlow": options_flow,
-        "macroData": macro,
         "newsProvidersUsed": sorted(list({a.get("provider", "Unknown") for a in articles})),
     }
 
+
+class PortfolioPosition(BaseModel):
+    ticker: str = Field(min_length=1, max_length=10)
+    shares: float = Field(gt=0)
+
+
+class PortfolioRequest(BaseModel):
+    positions: list[PortfolioPosition]
+    sentiment_model: str = "transformer"
+
+
+@app.get("/api/forecast")
+async def forecast(ticker: str = Query(..., min_length=1, max_length=10), sentiment_model: str = Query("transformer")) -> dict[str, Any]:
+    ticker = ticker.upper().strip()
+    history = fetch_month_prices(ticker)
+    articles = await fetch_news(ticker)
+    payload = build_forecast_payload(ticker, sentiment_model, history, articles)
+    payload["macroData"] = await fetch_macro_data()
+
+    now = datetime.now(UTC)
     base = f"{ticker}_{now.strftime('%Y%m%d_%H%M%S')}"
     prices_path = DATA_DIR / f"{base}_past_month_prices.json"
     per_outlet_path = DATA_DIR / f"{base}_per_outlet_predictions.json"
     dashboard_path = DATA_DIR / f"{base}_dashboard_chart_data.json"
 
     save_json(prices_path, {"ticker": ticker, "window": "1m", "prices": history})
-    save_json(per_outlet_path, {"ticker": ticker, "generatedAt": now.isoformat(), "perOutletForecast": per_outlet})
+    save_json(per_outlet_path, {"ticker": ticker, "generatedAt": now.isoformat(), "perOutletForecast": payload["perOutletForecast"]})
     save_json(dashboard_path, payload)
 
     return {
@@ -468,6 +494,71 @@ async def forecast(ticker: str = Query(..., min_length=1, max_length=10), sentim
             "dashboardChartData": str(dashboard_path.relative_to(BASE_DIR)),
         },
         "data": payload,
+    }
+
+
+@app.get("/api/quotes/popular")
+def popular_quotes() -> dict[str, Any]:
+    tickers = ["AAPL", "MSFT", "NVDA", "AMZN", "GOOGL", "META", "TSLA", "JPM"]
+    quotes = []
+    for ticker in tickers:
+        try:
+            quotes.append({"ticker": ticker, "price": fetch_latest_quote(ticker)})
+        except Exception:
+            continue
+    return {"quotes": quotes}
+
+
+@app.post("/api/portfolio/forecast")
+async def portfolio_forecast(req: PortfolioRequest) -> dict[str, Any]:
+    if not req.positions:
+        raise HTTPException(status_code=400, detail="Portfolio is empty")
+
+    position_payloads: list[dict[str, Any]] = []
+    for pos in req.positions:
+        ticker = pos.ticker.upper().strip()
+        history = fetch_month_prices(ticker)
+        articles = await fetch_news(ticker)
+        payload = build_forecast_payload(ticker, req.sentiment_model, history, articles)
+        latest = history[-1]["close"]
+        next_week = payload["combinedForecast"][-1]["predictedClose"]
+        position_payloads.append(
+            {
+                "ticker": ticker,
+                "shares": pos.shares,
+                "latestPrice": latest,
+                "forecastWeekEndPrice": next_week,
+                "forecastDeltaPct": round((next_week - latest) / latest * 100, 3) if latest else 0,
+                "historicalPrices": history,
+                "combinedForecast": payload["combinedForecast"],
+                "perOutletForecast": payload["perOutletForecast"],
+            }
+        )
+
+    base_history = position_payloads[0]["historicalPrices"]
+    by_date: dict[str, float] = {row["date"]: 0.0 for row in base_history}
+    future_dates = {row["date"] for row in position_payloads[0]["combinedForecast"]}
+    by_future_date: dict[str, float] = {d: 0.0 for d in future_dates}
+
+    for pos in position_payloads:
+        hist_map = {row["date"]: row["close"] for row in pos["historicalPrices"]}
+        fut_map = {row["date"]: row["predictedClose"] for row in pos["combinedForecast"]}
+        for d in by_date:
+            by_date[d] += hist_map.get(d, 0.0) * pos["shares"]
+        for d in by_future_date:
+            by_future_date[d] += fut_map.get(d, 0.0) * pos["shares"]
+
+    valuation_history = [{"date": d, "value": round(v, 2)} for d, v in sorted(by_date.items())]
+    valuation_forecast = [{"date": d, "value": round(v, 2)} for d, v in sorted(by_future_date.items())]
+
+    return {
+        "positions": position_payloads,
+        "portfolioValuation": {
+            "history": valuation_history,
+            "forecast": valuation_forecast,
+            "currentValue": valuation_history[-1]["value"],
+            "forecastWeekEndValue": valuation_forecast[-1]["value"],
+        },
     }
 
 
