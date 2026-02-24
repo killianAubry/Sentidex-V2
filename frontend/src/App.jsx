@@ -280,249 +280,349 @@ function PortfolioDashboard({
   )
 }
 
+const NODE_ICONS = {
+  headquarters: '🏢',
+  manufacturing: '🏭',
+  port: '⚓',
+  warehouse: '📦',
+  supplier: '🔩',
+  distribution: '🚚',
+  mine: '⛏️',
+  farm: '🌾',
+  default: '📍',
+}
+
+const RISK_COLORS = {
+  low: '#22c55e',
+  medium: '#f59e0b',
+  high: '#ef4444',
+  critical: '#7c3aed',
+}
+
 function GlobalMarketIntelligence({ keyword, setKeyword }) {
   const [data, setData] = useState(null)
-  const [time, setTime] = useState(7)
+  const [loading, setLoading] = useState(false)
   const [selected, setSelected] = useState(null)
-  const [layers, setLayers] = useState({ companies: true, shippingRoutes: true, weather: true, macro: true, aiSignal: true })
+  const [layers, setLayers] = useState({ nodes: true, routes: true, weather: true, risk: true })
   const svgRef = useRef(null)
-  const [rotation, setRotation] = useState([45, -30])
+  const [rotation, setRotation] = useState([0, -30])
   const [scale, setScale] = useState(250)
   const [land, setLand] = useState(null)
+  const [inputVal, setInputVal] = useState(keyword)
 
-  useEffect(() => {
-    // Load initial data on mount
-    fetch(`/api/global-intelligence?keyword=${encodeURIComponent(keyword)}`)
-      .then((r) => r.json())
-      .then((j) => setData(j.data))
-      .catch(() => setData(null))
-  }, [])
-
+  // Load world topology
   useEffect(() => {
     fetch('https://cdn.jsdelivr.net/npm/world-atlas@2/land-110m.json')
       .then(r => r.json())
-      .then(world => {
-        setLand(topojson.feature(world, world.objects.land))
-      })
+      .then(world => setLand(topojson.feature(world, world.objects.land)))
   }, [])
 
-  const filtered = useMemo(() => {
-    if (!data) return null
-    const l = data.layers
-    return {
-      companies: (l.companies || []).filter((x) => x.dayOffset <= time),
-      shippingRoutes: (l.shippingRoutes || []).filter((x) => x.dayOffset <= time),
-      weather: (l.weather || []).filter((x) => x.dayOffset <= time),
-      macro: Object.entries(l.macro || {}).filter(([, v]) => (v.dayOffset || 0) <= time),
-      aiSignal: l.aiSignal,
-    }
-  }, [data, time])
-
-  // D3 Projection for 3D Globe
-  const width = 800
-  const height = 600
-  const projection = d3geo.geoOrthographic()
-    .scale(scale)
-    .translate([width / 2, height / 2])
-    .rotate(rotation)
-    .clipAngle(90)
-
-  const path = d3geo.geoPath(projection)
-
-  // Drag and Zoom behavior
+  // Drag + zoom on globe
   useEffect(() => {
     const svg = d3.select(svgRef.current)
-
-    const drag = d3.drag().on('drag', (event) => {
-      setRotation(([r0, r1]) => [r0 + event.dx / 2, r1 - event.dy / 2])
-    })
-
-    const zoom = d3.zoom().on('zoom', (event) => {
-      setScale(250 * event.transform.k)
-    })
-
-    svg.call(drag)
-    svg.call(zoom)
+    svg.call(
+      d3.drag().on('drag', (e) =>
+        setRotation(([r0, r1]) => [r0 + e.dx / 2, r1 - e.dy / 2])
+      )
+    )
+    svg.call(
+      d3.zoom().scaleExtent([0.5, 4]).on('zoom', (e) =>
+        setScale(250 * e.transform.k)
+      )
+    )
   }, [])
 
-  function toggle(k) { setLayers((p) => ({ ...p, [k]: !p[k] })) }
+  async function runSearch(q) {
+    setLoading(true)
+    setSelected(null)
+    setData(null)
+    try {
+      const r = await fetch(`/api/globe-supply-chain?query=${encodeURIComponent(q)}`)
+      const j = await r.json()
+      setData(j)
+      setKeyword(q)
+      // Auto-rotate to first node
+      if (j.nodes?.length) {
+        setRotation([-j.nodes[0].lon, -j.nodes[0].lat + 20])
+      }
+    } catch (e) {
+      console.error(e)
+    } finally {
+      setLoading(false)
+    }
+  }
 
-  const getLinePath = (from, to) => {
-    const start = [from.lon, from.lat]
-    const end = [to.lon, to.lat]
-    return path({ type: 'LineString', coordinates: [start, end] })
+  const width = 800
+  const height = 580
+
+  const projection = useMemo(() =>
+    d3geo.geoOrthographic()
+      .scale(scale)
+      .translate([width / 2, height / 2])
+      .rotate(rotation)
+      .clipAngle(90),
+    [scale, rotation]
+  )
+
+  const path = useMemo(() => d3geo.geoPath(projection), [projection])
+
+  function isVisible(lon, lat) {
+    try {
+      const center = projection.invert([width / 2, height / 2])
+      return d3geo.geoDistance(center, [lon, lat]) < Math.PI / 2
+    } catch { return false }
+  }
+
+  function getRoutePath(from, to) {
+    try {
+      return path({ type: 'LineString', coordinates: [[from.lon, from.lat], [to.lon, to.lat]] })
+    } catch { return null }
   }
 
   return (
     <div className="gmi-page">
+      {/* Header */}
       <div className="gmi-header">
-        <div className="search-bar">
+        <div className="search-bar" style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
           <input
-            value={keyword}
-            onChange={(e) => setKeyword(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') {
-                // Trigger refresh or specific supply chain search if needed
-                fetch(`/api/global-intelligence?keyword=${encodeURIComponent(keyword)}`)
-                  .then((r) => r.json())
-                  .then((j) => setData(j.data))
-                  .catch(() => setData(null))
-              }
-            }}
-            placeholder="Search commodities, companies, sectors... (Press Enter)"
+            value={inputVal}
+            onChange={e => setInputVal(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Enter') runSearch(inputVal) }}
+            placeholder="Enter company, commodity or sector... (Press Enter)"
+            style={{ flex: 1 }}
           />
+          <button onClick={() => runSearch(inputVal)} disabled={loading} className="refresh-btn">
+            {loading ? '🔄 Analyzing...' : '🔍 Analyze Supply Chain'}
+          </button>
         </div>
-        <div className="time-control">
-          <span>Time: +{time}d</span>
-          <input
-            type="range"
-            min="0"
-            max={data?.timeWindowDays || 14}
-            value={time}
-            onChange={(e) => setTime(Number(e.target.value))}
-          />
-        </div>
+
+        {data?.openbb?.ticker && (
+          <div className="openbb-bar">
+            <span>{data.openbb.ticker}</span>
+            <span>${data.openbb.price?.toFixed(2)}</span>
+            <span style={{ color: data.openbb.change_pct >= 0 ? '#22c55e' : '#ef4444' }}>
+              {data.openbb.change_pct >= 0 ? '▲' : '▼'} {Math.abs(data.openbb.change_pct ?? 0).toFixed(2)}%
+            </span>
+          </div>
+        )}
       </div>
 
       <div className="gmi-layout">
-        <div className="globe-container card">
+        {/* Globe */}
+        <div className="globe-container card" style={{ position: 'relative' }}>
+          {loading && (
+            <div style={{
+              position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column',
+              alignItems: 'center', justifyContent: 'center', background: 'rgba(15,23,42,0.85)',
+              zIndex: 10, borderRadius: '1rem', gap: '1rem'
+            }}>
+              <div style={{ fontSize: '2rem' }}>🌐</div>
+              <div style={{ color: '#60a5fa', fontSize: '1rem' }}>AI is mapping the supply chain...</div>
+              <div style={{ color: '#94a3b8', fontSize: '0.8rem' }}>Querying Groq → Geocoding → Risk Analysis</div>
+            </div>
+          )}
+
           <svg ref={svgRef} viewBox={`0 0 ${width} ${height}`} className="globe-3d">
             <defs>
-              <radialGradient id="globe-grad" cx="50%" cy="40%" r="50%">
-                <stop offset="0%" stopColor="#1e293b" />
-                <stop offset="100%" stopColor="#0f172a" />
+              <radialGradient id="globe-grad" cx="45%" cy="35%" r="55%">
+                <stop offset="0%" stopColor="#1e3a5f" />
+                <stop offset="100%" stopColor="#0a0f1e" />
               </radialGradient>
             </defs>
-            <circle cx={width/2} cy={height/2} r={projection.scale()} fill="url(#globe-grad)" />
+
+            {/* Ocean */}
+            <circle cx={width / 2} cy={height / 2} r={scale} fill="url(#globe-grad)" />
 
             {/* Graticule */}
-            <path d={path(d3geo.geoGraticule()())} fill="none" stroke="#475569" strokeWidth="0.5" />
+            <path d={path(d3geo.geoGraticule()())} fill="none" stroke="#1e3a5f" strokeWidth="0.5" opacity="0.8" />
 
             {/* Land */}
-            {land && (
-              <path d={path(land)} fill="rgba(255,255,255,0.05)" stroke="#475569" strokeWidth="0.5" />
-            )}
+            {land && <path d={path(land)} fill="#1e293b" stroke="#334155" strokeWidth="0.8" />}
 
-            {/* Supply Chain Routes */}
-            {layers.shippingRoutes && filtered?.shippingRoutes?.map((r, i) => {
-              const d = getLinePath(r.from, r.to)
+            {/* Routes */}
+            {layers.routes && data?.routes?.map((r, i) => {
+              const d = getRoutePath(r.from, r.to)
               if (!d) return null
+              const color = r.risk > 0.6 ? '#ef4444' : r.risk > 0.3 ? '#f59e0b' : '#22c55e'
               return (
-                <path
-                  key={`route-${i}`}
-                  d={d}
-                  fill="none"
-                    stroke={r.disruptionScore > 0.4 ? '#ef4444' : '#94a3b8'}
-                    strokeWidth="1.5"
-                    strokeDasharray="3 3"
-                    opacity="0.6"
+                <path key={`route-${i}`} d={d} fill="none"
+                  stroke={color} strokeWidth="1.5"
+                  strokeDasharray="5 4" opacity="0.75"
                 />
               )
             })}
 
-            {/* Nodes / Markers */}
-            <g className="markers">
-              {layers.companies && filtered?.companies?.map((c) => {
-                const coords = projection([c.lon, c.lat])
-                const isVisible = d3geo.geoDistance(projection.invert([width/2, height/2]), [c.lon, c.lat]) < Math.PI / 2
-                if (!coords || !isVisible) return null
-                return (
-                  <g key={c.ticker} transform={`translate(${coords[0]-8},${coords[1]-8})`} onClick={() => setSelected(c)} className="node-marker">
-                    <rect width="16" height="16" rx="2" fill={c.direction === 'up' ? '#22c55e' : '#ef4444'} />
-                    <text x="8" y="12" fontSize="10" textAnchor="middle" fill="white" fontWeight="bold">B</text>
-                  </g>
-                )
-              })}
+            {/* Nodes */}
+            {layers.nodes && data?.nodes?.map((node, i) => {
+              if (!isVisible(node.lon, node.lat)) return null
+              const coords = projection([node.lon, node.lat])
+              if (!coords) return null
+              const riskColor = RISK_COLORS[node.risk?.level] || '#94a3b8'
+              const icon = NODE_ICONS[node.type] || NODE_ICONS.default
 
-              {layers.weather && filtered?.weather?.map((w, i) => {
-                const coords = projection([w.lon, w.lat])
-                const isVisible = d3geo.geoDistance(projection.invert([width/2, height/2]), [w.lon, w.lat]) < Math.PI / 2
-                if (!coords || !isVisible) return null
-                return (
-                  <g key={`weather-${i}`} transform={`translate(${coords[0]-10},${coords[1]-10})`} onClick={() => setSelected({ ...w, type: 'weather' })} className="node-marker">
-                    <circle r="10" cx="10" cy="10" fill="rgba(96, 165, 250, 0.2)" stroke="#60a5fa" strokeWidth="1" />
-                    <text x="10" y="14" fontSize="12" textAnchor="middle">☁️</text>
-                  </g>
-                )
-              })}
+              return (
+                <g key={`node-${i}`} transform={`translate(${coords[0]},${coords[1]})`}
+                  onClick={() => setSelected(node)} className="node-marker" style={{ cursor: 'pointer' }}>
 
-              {layers.macro && filtered?.macro?.map(([k, m], i) => {
-                const coords = projection([m.lon, m.lat])
-                const isVisible = d3geo.geoDistance(projection.invert([width/2, height/2]), [m.lon, m.lat]) < Math.PI / 2
-                if (!coords || !isVisible) return null
-                return (
-                  <g key={`macro-${i}`} transform={`translate(${coords[0]-8},${coords[1]-8})`} onClick={() => setSelected({ name: k, ...m, type: 'macro' })} className="node-marker">
-                    <circle r="8" cx="8" cy="8" fill="#f59e0b" stroke="#fff" strokeWidth="1" />
-                    <text x="8" y="11" fontSize="10" textAnchor="middle" fill="white">M</text>
-                  </g>
-                )
-              })}
-            </g>
+                  {/* Risk pulse ring */}
+                  {layers.risk && (
+                    <circle r="18" fill="none" stroke={riskColor} strokeWidth="1.5" opacity="0.4" />
+                  )}
+
+                  {/* Node background */}
+                  <circle r="12" fill="#0f172a" stroke={riskColor} strokeWidth="2" />
+
+                  {/* Icon */}
+                  <text textAnchor="middle" dominantBaseline="central" fontSize="12">{icon}</text>
+
+                  {/* Weather icon */}
+                  {layers.weather && node.weather?.icon && (
+                    <text x="14" y="-14" fontSize="11" textAnchor="middle">{node.weather.icon}</text>
+                  )}
+
+                  {/* Risk score badge */}
+                  {layers.risk && node.risk?.score > 0.4 && (
+                    <g transform="translate(10,-10)">
+                      <circle r="6" fill={riskColor} />
+                      <text textAnchor="middle" dominantBaseline="central" fontSize="7" fill="white" fontWeight="bold">
+                        {Math.round(node.risk.score * 10)}
+                      </text>
+                    </g>
+                  )}
+
+                  {/* Name label */}
+                  <text y="24" textAnchor="middle" fontSize="9" fill="#94a3b8" style={{ pointerEvents: 'none' }}>
+                    {node.city || node.name}
+                  </text>
+                </g>
+              )
+            })}
           </svg>
+
+          {/* Layer toggles overlay */}
+          <div style={{
+            position: 'absolute', bottom: '1rem', left: '1rem',
+            display: 'flex', gap: '0.5rem', flexWrap: 'wrap'
+          }}>
+            {Object.keys(layers).map(k => (
+              <button key={k}
+                onClick={() => setLayers(p => ({ ...p, [k]: !p[k] }))}
+                style={{
+                  padding: '0.25rem 0.6rem', fontSize: '0.7rem', borderRadius: '999px',
+                  background: layers[k] ? '#3b82f6' : '#1e293b',
+                  border: '1px solid #334155', color: 'white', cursor: 'pointer'
+                }}>
+                {k.charAt(0).toUpperCase() + k.slice(1)}
+              </button>
+            ))}
+          </div>
         </div>
 
+        {/* Sidebar */}
         <aside className="gmi-sidebar">
-          <div className="layer-controls card">
-            <h4>Intelligence Layers</h4>
-            <div className="layer-toggles">
-              {Object.keys(layers).map((k) => (
-                <label key={k} className="toggle-label">
-                  <input type="checkbox" checked={layers[k]} onChange={() => toggle(k)} />
-                  {k.replace(/([A-Z])/g, ' $1').replace(/^./, str => str.toUpperCase())}
-                </label>
-              ))}
-            </div>
-          </div>
-
+          {/* Node detail panel */}
           {selected && (
-            <div className="detail-panel card">
-              <h4>{selected.name || selected.ticker}</h4>
-              <div className="detail-content">
-                <RiskMeter score={selected.riskScore || (selected.disruptionScore || 0.2)} />
-                <div style={{ marginBottom: '1rem' }} />
-
-                {selected.type === 'weather' ? (
-                  <>
-                    <p>Severity: {(selected.severity * 100).toFixed(0)}%</p>
-                    {selected.tempC && <p>Temp: {selected.tempC}°C</p>}
-                    {selected.precipitationMm && <p>Precipitation: {selected.precipitationMm}mm</p>}
-                  </>
-                ) : selected.type === 'macro' ? (
-                  <>
-                    <p>Interest Rate: {selected.interestRate}%</p>
-                    <p>Inflation: {selected.inflation}%</p>
-                    <p>GDP Growth: {selected.gdpGrowth}%</p>
-                  </>
-                ) : (
-                  <>
-                    <p>Price: ${selected.priceNow}</p>
-                    <p>Forecast: ${selected.forecastPrice}</p>
-                    <p>Sentiment: {selected.sentiment}</p>
-                    <p>Confidence: {(selected.confidence * 100).toFixed(0)}%</p>
-                  </>
-                )}
+            <div className="detail-panel card" style={{ marginBottom: '1rem' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                <div>
+                  <h4 style={{ margin: 0 }}>
+                    {NODE_ICONS[selected.type] || '📍'} {selected.name}
+                  </h4>
+                  <div style={{ color: '#60a5fa', fontSize: '0.8rem' }}>{selected.type} · {selected.city}, {selected.country}</div>
+                </div>
+                <button className="close-btn" onClick={() => setSelected(null)}>✕</button>
               </div>
-              <button className="close-btn" onClick={() => setSelected(null)}>Close</button>
+
+              <p style={{ color: '#94a3b8', fontSize: '0.85rem', margin: '0.5rem 0' }}>{selected.role}</p>
+
+              {/* Risk */}
+              <div style={{ marginBottom: '0.75rem' }}>
+                <div style={{ color: RISK_COLORS[selected.risk?.level], fontWeight: 'bold', fontSize: '0.85rem', marginBottom: '0.25rem' }}>
+                  Risk: {selected.risk?.level?.toUpperCase()} ({Math.round((selected.risk?.score || 0) * 100)}%)
+                </div>
+                <RiskMeter score={selected.risk?.score || 0} />
+                <p style={{ color: '#94a3b8', fontSize: '0.8rem', marginTop: '0.4rem' }}>{selected.risk?.summary}</p>
+              </div>
+
+              {/* Weather */}
+              {selected.weather && (
+                <div style={{ background: '#0f172a', borderRadius: '0.5rem', padding: '0.5rem', marginBottom: '0.75rem' }}>
+                  <div style={{ color: '#94a3b8', fontSize: '0.8rem' }}>
+                    {selected.weather.icon} {selected.weather.condition}
+                    {selected.weather.temp_c != null && ` · ${selected.weather.temp_c}°C`}
+                    {selected.weather.wind_kph != null && ` · 💨 ${selected.weather.wind_kph} km/h`}
+                  </div>
+                </div>
+              )}
+
+              {/* Headlines */}
+              {selected.risk?.headlines?.length > 0 && (
+                <div>
+                  <div style={{ color: '#64748b', fontSize: '0.75rem', marginBottom: '0.4rem' }}>RECENT NEWS</div>
+                  {selected.risk.headlines.slice(0, 3).map((h, i) => (
+                    <div key={i} style={{
+                      fontSize: '0.75rem', color: '#94a3b8', padding: '0.3rem 0',
+                      borderBottom: '1px solid #1e293b'
+                    }}>• {h}</div>
+                  ))}
+                </div>
+              )}
+
+              {/* Connections */}
+              {selected.connections?.length > 0 && (
+                <div style={{ marginTop: '0.75rem' }}>
+                  <div style={{ color: '#64748b', fontSize: '0.75rem', marginBottom: '0.3rem' }}>CONNECTS TO</div>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.3rem' }}>
+                    {selected.connections.map(c => (
+                      <span key={c} style={{
+                        fontSize: '0.7rem', padding: '0.15rem 0.4rem',
+                        background: '#1e293b', borderRadius: '999px', color: '#60a5fa'
+                      }}>{c}</span>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
-          {layers.aiSignal && filtered?.aiSignal && (
-            <div className="ai-signal-panel card">
-              <h4>AI Global Signal</h4>
-              <div className="signal-data">
-                <div className="signal-item">
-                  <span className="label">Keyword</span>
-                  <span className="value">{filtered.aiSignal.keyword}</span>
-                </div>
-                <div className="signal-item">
-                  <span className="label">Polymarket Prob</span>
-                  <span className="value">{(filtered.aiSignal.polymarketProbability * 100).toFixed(1)}%</span>
-                </div>
-                <div className="signal-item">
-                  <span className="label">Global Direction</span>
-                  <span className="value">{(filtered.aiSignal.globalDirection * 100).toFixed(1)}</span>
-                </div>
+          {/* Node list */}
+          {data?.nodes && (
+            <div className="card" style={{ padding: '1rem' }}>
+              <h4 style={{ margin: '0 0 0.75rem' }}>Supply Chain Nodes ({data.nodes.length})</h4>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem', maxHeight: '350px', overflowY: 'auto' }}>
+                {[...data.nodes]
+                  .sort((a, b) => (b.risk?.score || 0) - (a.risk?.score || 0))
+                  .map((node, i) => (
+                    <div key={i}
+                      onClick={() => {
+                        setSelected(node)
+                        setRotation([-node.lon, -node.lat + 20])
+                      }}
+                      style={{
+                        display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                        padding: '0.4rem 0.6rem', background: '#0f172a', borderRadius: '0.4rem',
+                        cursor: 'pointer', border: `1px solid ${RISK_COLORS[node.risk?.level] || '#334155'}22`
+                      }}>
+                      <div>
+                        <span style={{ marginRight: '0.4rem' }}>{NODE_ICONS[node.type] || '📍'}</span>
+                        <span style={{ fontSize: '0.8rem', color: '#e2e8f0' }}>{node.name}</span>
+                        <span style={{ fontSize: '0.7rem', color: '#64748b', marginLeft: '0.4rem' }}>{node.city}</span>
+                      </div>
+                      <span style={{
+                        fontSize: '0.7rem', padding: '0.1rem 0.4rem', borderRadius: '999px',
+                        background: RISK_COLORS[node.risk?.level] + '33',
+                        color: RISK_COLORS[node.risk?.level]
+                      }}>{node.risk?.level}</span>
+                    </div>
+                  ))}
               </div>
+            </div>
+          )}
+
+          {!data && !loading && (
+            <div className="card" style={{ padding: '2rem', textAlign: 'center', color: '#64748b' }}>
+              <div style={{ fontSize: '3rem', marginBottom: '1rem' }}>🌐</div>
+              <div>Enter a company or commodity above and press Enter to map its global supply chain using AI.</div>
             </div>
           )}
         </aside>
