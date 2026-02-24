@@ -2,11 +2,13 @@ import { useEffect, useMemo, useState, useRef } from 'react'
 import * as d3 from 'd3'
 import * as d3geo from 'd3-geo'
 import * as topojson from 'topojson-client'
-import { ChartCanvas, Chart } from 'react-stockcharts'
-import { LineSeries } from 'react-stockcharts/lib/series'
-import { XAxis, YAxis } from 'react-stockcharts/lib/axes'
-import { CrossHairCursor, MouseCoordinateX, MouseCoordinateY } from 'react-stockcharts/lib/coordinates'
-import { discontinuousTimeScaleProvider } from 'react-stockcharts/lib/scale'
+import Highcharts from 'highcharts'
+import HighchartsReact from 'highcharts-react-official'
+import HighchartsMore from 'highcharts/highcharts-more'
+
+if (typeof Highcharts === 'object') {
+  HighchartsMore(Highcharts)
+}
 
 const STORAGE_KEY = 'sentidex-portfolio-v3'
 const defaultPortfolio = [{ ticker: 'AAPL', shares: 4 }, { ticker: 'MSFT', shares: 2 }, { ticker: 'NVDA', shares: 1 }]
@@ -43,35 +45,98 @@ function aggregateForecastFromSources(positions = [], selectedSources = []) {
 
 // --- Components ---
 
-function StockChart({ title, history, forecast, valueKey = 'close' }) {
-  const data = useMemo(() => toSeries(history, forecast, valueKey), [history, forecast, valueKey])
-  if (!data.length) return <div className="no-data">No chart data available.</div>
+function StockChart({ title, history, forecast, valueKey = 'value', separateLines = [], showConfidence = false }) {
+  const options = useMemo(() => {
+    const histData = history.map(d => [new Date(d.date).getTime(), d[valueKey] || d.close])
+    const foreData = forecast.map(d => [new Date(d.date).getTime(), d.predictedClose || d.value])
 
-  const xScaleProvider = discontinuousTimeScaleProvider.inputDateAccessor((d) => d.date)
-  const { data: chartData, xScale, xAccessor, displayXAccessor } = xScaleProvider(data)
+    // Create area range data (forecast +/- 5% for demo)
+    const rangeData = forecast.map(d => {
+      const val = d.predictedClose || d.value
+      return [new Date(d.date).getTime(), val * 0.95, val * 1.05]
+    })
+
+    const series = [
+      {
+        name: 'History',
+        data: histData,
+        color: '#3b82f6',
+        zIndex: 2
+      },
+      {
+        name: 'Aggregate Forecast',
+        data: foreData,
+        color: '#60a5fa',
+        dashStyle: 'ShortDash',
+        zIndex: 3
+      }
+    ]
+
+    if (showConfidence) {
+      series.push({
+        name: 'Confidence Range',
+        data: rangeData,
+        type: 'arearange',
+        lineWidth: 0,
+        linkedTo: ':previous',
+        color: '#3b82f6',
+        fillOpacity: 0.1,
+        zIndex: 1,
+        marker: { enabled: false }
+      })
+    }
+
+    separateLines.forEach((line, i) => {
+      series.push({
+        name: `Source: ${line.name}`,
+        data: line.data.map(d => [new Date(d.date).getTime(), d.value]),
+        color: Highcharts.getOptions().colors[i + 2],
+        dashStyle: 'Dot',
+        zIndex: 2,
+        opacity: 0.7
+      })
+    })
+
+    return {
+      chart: {
+        backgroundColor: '#1e293b',
+        style: { fontFamily: 'Inter, sans-serif' },
+        height: 400
+      },
+      title: { text: null },
+      xAxis: {
+        type: 'datetime',
+        gridLineColor: '#334155',
+        labels: { style: { color: '#94a3b8' } }
+      },
+      yAxis: {
+        title: { text: null },
+        gridLineColor: '#334155',
+        labels: { style: { color: '#94a3b8' } }
+      },
+      legend: { itemStyle: { color: '#94a3b8' } },
+      tooltip: { shared: true },
+      series
+    }
+  }, [history, forecast, valueKey, separateLines, showConfidence])
+
+  if (!history.length && !forecast.length) return <div className="no-data">No chart data available.</div>
 
   return (
     <div className="chart-container">
-      <ChartCanvas
-        width={800}
-        height={400}
-        ratio={1}
-        margin={{ left: 50, right: 50, top: 20, bottom: 30 }}
-        data={chartData}
-        seriesName={title}
-        xScale={xScale}
-        xAccessor={xAccessor}
-        displayXAccessor={displayXAccessor}
-      >
-        <Chart id={1} yExtents={(d) => d.value}>
-          <XAxis axisAt="bottom" orient="bottom" stroke="#94a3b8" tickStroke="#94a3b8" />
-          <YAxis axisAt="left" orient="left" stroke="#94a3b8" tickStroke="#94a3b8" />
-          <MouseCoordinateX />
-          <MouseCoordinateY />
-          <LineSeries yAccessor={(d) => d.value} stroke="#3b82f6" strokeWidth={2} />
-        </Chart>
-        <CrossHairCursor stroke="#94a3b8" />
-      </ChartCanvas>
+      <HighchartsReact highcharts={Highcharts} options={options} />
+    </div>
+  )
+}
+
+const RiskMeter = ({ score }) => {
+  const color = score > 0.7 ? '#ef4444' : score > 0.4 ? '#f59e0b' : '#22c55e'
+  return (
+    <div className="risk-meter-container">
+      <div className="risk-meter-label">RISK LEVEL: {(score * 100).toFixed(0)}%</div>
+      <div className="risk-meter-track">
+        <div className="risk-meter-bar" style={{ width: `${score * 100}%`, backgroundColor: color }} />
+      </div>
     </div>
   )
 }
@@ -133,15 +198,9 @@ function PortfolioDashboard({
                 history={portfolioData?.portfolioValuation?.history || []}
                 forecast={forecastBySelectedSources}
                 valueKey="value"
+                separateLines={separateLines}
+                showConfidence={viewStates.showConfidence}
               />
-              {viewStates.showConfidence && (
-                <div className="confidence-indicator">Confidence Interval: ±4.2% (95% CI)</div>
-              )}
-              {viewStates.separateForecasts && (
-                <div className="separate-forecasts-legend">
-                  {selectedSources.map(s => <span key={s} className="legend-item">{s}</span>)}
-                </div>
-              )}
             </div>
 
             <div className="command-center card">
@@ -226,11 +285,12 @@ function GlobalMarketIntelligence({ keyword, setKeyword }) {
   const [land, setLand] = useState(null)
 
   useEffect(() => {
+    // Load initial data on mount
     fetch(`/api/global-intelligence?keyword=${encodeURIComponent(keyword)}`)
       .then((r) => r.json())
       .then((j) => setData(j.data))
       .catch(() => setData(null))
-  }, [keyword])
+  }, [])
 
   useEffect(() => {
     fetch('https://cdn.jsdelivr.net/npm/world-atlas@2/land-110m.json')
@@ -294,7 +354,16 @@ function GlobalMarketIntelligence({ keyword, setKeyword }) {
           <input
             value={keyword}
             onChange={(e) => setKeyword(e.target.value)}
-            placeholder="Search commodities, companies, sectors..."
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                // Trigger refresh or specific supply chain search if needed
+                fetch(`/api/global-intelligence?keyword=${encodeURIComponent(keyword)}`)
+                  .then((r) => r.json())
+                  .then((j) => setData(j.data))
+                  .catch(() => setData(null))
+              }
+            }}
+            placeholder="Search commodities, companies, sectors... (Press Enter)"
           />
         </div>
         <div className="time-control">
@@ -337,10 +406,10 @@ function GlobalMarketIntelligence({ keyword, setKeyword }) {
                   key={`route-${i}`}
                   d={d}
                   fill="none"
-                  stroke={r.disruptionScore > 0.4 ? '#ef4444' : '#60a5fa'}
-                  strokeWidth="2"
-                  strokeDasharray="4 2"
-                  opacity="0.8"
+                    stroke={r.disruptionScore > 0.4 ? '#ef4444' : '#94a3b8'}
+                    strokeWidth="1.5"
+                    strokeDasharray="3 3"
+                    opacity="0.6"
                 />
               )
             })}
@@ -352,17 +421,10 @@ function GlobalMarketIntelligence({ keyword, setKeyword }) {
                 const isVisible = d3geo.geoDistance(projection.invert([width/2, height/2]), [c.lon, c.lat]) < Math.PI / 2
                 if (!coords || !isVisible) return null
                 return (
-                  <circle
-                    key={c.ticker}
-                    cx={coords[0]}
-                    cy={coords[1]}
-                    r={6}
-                    fill={c.direction === 'up' ? '#22c55e' : '#ef4444'}
-                    stroke="#fff"
-                    strokeWidth="1"
-                    onClick={() => setSelected(c)}
-                    className="node-marker"
-                  />
+                  <g key={c.ticker} transform={`translate(${coords[0]-8},${coords[1]-8})`} onClick={() => setSelected(c)} className="node-marker">
+                    <rect width="16" height="16" rx="2" fill={c.direction === 'up' ? '#22c55e' : '#ef4444'} />
+                    <text x="8" y="12" fontSize="10" textAnchor="middle" fill="white" fontWeight="bold">B</text>
+                  </g>
                 )
               })}
 
@@ -371,17 +433,10 @@ function GlobalMarketIntelligence({ keyword, setKeyword }) {
                 const isVisible = d3geo.geoDistance(projection.invert([width/2, height/2]), [w.lon, w.lat]) < Math.PI / 2
                 if (!coords || !isVisible) return null
                 return (
-                  <circle
-                    key={`weather-${i}`}
-                    cx={coords[0]}
-                    cy={coords[1]}
-                    r={10}
-                    fill="rgba(96, 165, 250, 0.5)"
-                    stroke="#60a5fa"
-                    strokeWidth="2"
-                    onClick={() => setSelected({ ...w, type: 'weather' })}
-                    className="node-marker"
-                  />
+                  <g key={`weather-${i}`} transform={`translate(${coords[0]-10},${coords[1]-10})`} onClick={() => setSelected({ ...w, type: 'weather' })} className="node-marker">
+                    <circle r="10" cx="10" cy="10" fill="rgba(96, 165, 250, 0.2)" stroke="#60a5fa" strokeWidth="1" />
+                    <text x="10" y="14" fontSize="12" textAnchor="middle">☁️</text>
+                  </g>
                 )
               })}
 
@@ -390,18 +445,10 @@ function GlobalMarketIntelligence({ keyword, setKeyword }) {
                 const isVisible = d3geo.geoDistance(projection.invert([width/2, height/2]), [m.lon, m.lat]) < Math.PI / 2
                 if (!coords || !isVisible) return null
                 return (
-                  <rect
-                    key={`macro-${i}`}
-                    x={coords[0] - 6}
-                    y={coords[1] - 6}
-                    width="12"
-                    height="12"
-                    fill="#f59e0b"
-                    stroke="#fff"
-                    strokeWidth="1"
-                    onClick={() => setSelected({ name: k, ...m, type: 'macro' })}
-                    className="node-marker"
-                  />
+                  <g key={`macro-${i}`} transform={`translate(${coords[0]-8},${coords[1]-8})`} onClick={() => setSelected({ name: k, ...m, type: 'macro' })} className="node-marker">
+                    <circle r="8" cx="8" cy="8" fill="#f59e0b" stroke="#fff" strokeWidth="1" />
+                    <text x="8" y="11" fontSize="10" textAnchor="middle" fill="white">M</text>
+                  </g>
                 )
               })}
             </g>
@@ -425,6 +472,9 @@ function GlobalMarketIntelligence({ keyword, setKeyword }) {
             <div className="detail-panel card">
               <h4>{selected.name || selected.ticker}</h4>
               <div className="detail-content">
+                <RiskMeter score={selected.riskScore || (selected.disruptionScore || 0.2)} />
+                <div style={{ marginBottom: '1rem' }} />
+
                 {selected.type === 'weather' ? (
                   <>
                     <p>Severity: {(selected.severity * 100).toFixed(0)}%</p>

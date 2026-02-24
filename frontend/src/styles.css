@@ -451,3 +451,26 @@ button:disabled {
     background: var(--accent);
     color: white;
 }
+
+.risk-meter-container {
+    margin-top: 10px;
+}
+
+.risk-meter-label {
+    font-size: 0.7rem;
+    font-weight: 700;
+    margin-bottom: 4px;
+    color: var(--text-secondary);
+}
+
+.risk-meter-track {
+    height: 6px;
+    background: #334155;
+    border-radius: 3px;
+    overflow: hidden;
+}
+
+.risk-meter-bar {
+    height: 100%;
+    transition: width 0.3s ease;
+}
