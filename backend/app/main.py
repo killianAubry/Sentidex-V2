@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import math
 import os
+import time
 from collections import defaultdict
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -18,6 +19,7 @@ from pydantic import BaseModel, Field
 BASE_DIR = Path(__file__).resolve().parents[1]
 DATA_DIR = BASE_DIR / "data"
 DATA_DIR.mkdir(parents=True, exist_ok=True)
+CACHE_FILE = DATA_DIR / "external_cache.json"
 
 app = FastAPI(title="Sentidex Pro Forecast API")
 app.add_middleware(
@@ -64,6 +66,35 @@ def save_json(path: Path, payload: dict[str, Any]) -> None:
     path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
 
+def load_cache() -> dict[str, Any]:
+    if not CACHE_FILE.exists():
+        return {}
+    try:
+        return json.loads(CACHE_FILE.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+def write_cache(cache: dict[str, Any]) -> None:
+    CACHE_FILE.write_text(json.dumps(cache, indent=2), encoding="utf-8")
+
+
+def get_cached(key: str, ttl_seconds: int) -> Any | None:
+    cache = load_cache()
+    entry = cache.get(key)
+    if not entry:
+        return None
+    if time.time() - entry.get("ts", 0) > ttl_seconds:
+        return None
+    return entry.get("payload")
+
+
+def set_cached(key: str, payload: Any) -> None:
+    cache = load_cache()
+    cache[key] = {"ts": time.time(), "payload": payload}
+    write_cache(cache)
+
+
 def fetch_latest_quote(ticker: str) -> float:
     stock = yf.Ticker(ticker)
     fast_info = getattr(stock, "fast_info", {})
@@ -87,24 +118,19 @@ def fetch_month_prices(ticker: str) -> list[dict[str, Any]]:
     if getattr(closes, "ndim", 1) > 1:
         closes = closes.iloc[:, 0]
 
-    history: list[dict[str, Any]] = []
-    for ts, close in closes.dropna().items():
-        history.append({"date": ts.strftime("%Y-%m-%d"), "close": round(float(close), 2)})
-    return history
+    return [{"date": ts.strftime("%Y-%m-%d"), "close": round(float(close), 2)} for ts, close in closes.dropna().items()]
 
 
 def lexicon_sentiment(text: str) -> float:
     tokens = [token.strip(".,:;!?()[]{}\"'").lower() for token in text.split()]
     if not tokens:
         return 0.0
-
     score = 0
     for token in tokens:
         if token in POSITIVE_WORDS:
             score += 1
         elif token in NEGATIVE_WORDS:
             score -= 1
-
     return score / max(len(tokens), 1)
 
 
@@ -124,24 +150,10 @@ async def fetch_news_from_newsapi(client: httpx.AsyncClient, ticker: str) -> lis
     api_key = os.getenv("NEWS_API_KEY")
     if not api_key:
         return []
-    params = {
-        "q": f"{ticker} stock OR {ticker} earnings",
-        "language": "en",
-        "sortBy": "publishedAt",
-        "pageSize": 25,
-        "apiKey": api_key,
-    }
+    params = {"q": f"{ticker} stock OR {ticker} earnings", "language": "en", "sortBy": "publishedAt", "pageSize": 20, "apiKey": api_key}
     resp = await client.get("https://newsapi.org/v2/everything", params=params)
     resp.raise_for_status()
-    return [
-        {
-            "provider": "NewsAPI",
-            "outlet": a.get("source", {}).get("name") or "Unknown",
-            "title": a.get("title") or "",
-            "description": a.get("description") or "",
-        }
-        for a in resp.json().get("articles", [])
-    ]
+    return [{"provider": "NewsAPI", "outlet": a.get("source", {}).get("name") or "Unknown", "title": a.get("title") or "", "description": a.get("description") or ""} for a in resp.json().get("articles", [])]
 
 
 async def fetch_news_from_gnews(client: httpx.AsyncClient, ticker: str) -> list[dict[str, Any]]:
@@ -151,15 +163,7 @@ async def fetch_news_from_gnews(client: httpx.AsyncClient, ticker: str) -> list[
     params = {"q": f"{ticker} stock", "lang": "en", "max": 20, "token": api_key}
     resp = await client.get("https://gnews.io/api/v4/search", params=params)
     resp.raise_for_status()
-    return [
-        {
-            "provider": "GNews",
-            "outlet": a.get("source", {}).get("name") or "Unknown",
-            "title": a.get("title") or "",
-            "description": a.get("description") or "",
-        }
-        for a in resp.json().get("articles", [])
-    ]
+    return [{"provider": "GNews", "outlet": a.get("source", {}).get("name") or "Unknown", "title": a.get("title") or "", "description": a.get("description") or ""} for a in resp.json().get("articles", [])]
 
 
 async def fetch_news_from_finnhub(client: httpx.AsyncClient, ticker: str) -> list[dict[str, Any]]:
@@ -171,15 +175,7 @@ async def fetch_news_from_finnhub(client: httpx.AsyncClient, ticker: str) -> lis
     params = {"symbol": ticker, "from": str(week_ago), "to": str(today), "token": api_key}
     resp = await client.get("https://finnhub.io/api/v1/company-news", params=params)
     resp.raise_for_status()
-    return [
-        {
-            "provider": "Finnhub",
-            "outlet": a.get("source") or "Unknown",
-            "title": a.get("headline") or "",
-            "description": a.get("summary") or "",
-        }
-        for a in resp.json()
-    ]
+    return [{"provider": "Finnhub", "outlet": a.get("source") or "Unknown", "title": a.get("headline") or "", "description": a.get("summary") or ""} for a in resp.json()]
 
 
 async def fetch_news_from_alphavantage(client: httpx.AsyncClient, ticker: str) -> list[dict[str, Any]]:
@@ -189,61 +185,101 @@ async def fetch_news_from_alphavantage(client: httpx.AsyncClient, ticker: str) -
     params = {"function": "NEWS_SENTIMENT", "tickers": ticker, "apikey": api_key, "limit": 40}
     resp = await client.get("https://www.alphavantage.co/query", params=params)
     resp.raise_for_status()
-    return [
-        {
-            "provider": "AlphaVantage",
-            "outlet": a.get("source") or "Unknown",
-            "title": a.get("title") or "",
-            "description": a.get("summary") or "",
-        }
-        for a in resp.json().get("feed", [])
-    ]
+    return [{"provider": "AlphaVantage", "outlet": a.get("source") or "Unknown", "title": a.get("title") or "", "description": a.get("summary") or ""} for a in resp.json().get("feed", [])]
 
 
 async def fetch_news(ticker: str) -> list[dict[str, Any]]:
     async with httpx.AsyncClient(timeout=20) as client:
         articles: list[dict[str, Any]] = []
-        for fn in [
-            fetch_news_from_newsapi,
-            fetch_news_from_gnews,
-            fetch_news_from_finnhub,
-            fetch_news_from_alphavantage,
-        ]:
+        for fn in [fetch_news_from_newsapi, fetch_news_from_gnews, fetch_news_from_finnhub, fetch_news_from_alphavantage]:
             try:
                 articles.extend(await fn(client, ticker))
             except Exception:
                 continue
-
     if articles:
         return articles
-
     return [
-        {
-            "provider": "Fallback",
-            "outlet": "Reuters",
-            "title": f"{ticker} shows strong growth outlook as analysts upgrade sentiment",
-            "description": "Investors optimistic on demand expansion and record margins.",
-        },
-        {
-            "provider": "Fallback",
-            "outlet": "Bloomberg",
-            "title": f"{ticker} faces short-term risk despite resilient fundamentals",
-            "description": "Some funds warn about downside volatility and sector decline.",
-        },
-        {
-            "provider": "Fallback",
-            "outlet": "CNBC",
-            "title": f"Traders bullish as {ticker} may beat quarterly expectations",
-            "description": "Potential gain if revenue surprise remains strong.",
-        },
+        {"provider": "Fallback", "outlet": "Reuters", "title": f"{ticker} shows strong growth outlook", "description": "Investors optimistic on expansion."},
+        {"provider": "Fallback", "outlet": "Bloomberg", "title": f"{ticker} faces short-term risk", "description": "Funds warn about downside volatility."},
     ]
 
 
-def sentiment_by_outlet(articles: list[dict[str, Any]], mode: str = "transformer") -> dict[str, dict[str, Any]]:
-    grouped: dict[str, dict[str, Any]] = defaultdict(
-        lambda: {"sentimentScores": [], "headlines": [], "providers": set()}
-    )
+async def fetch_polymarket_signal(keyword: str) -> dict[str, Any]:
+    cache_key = f"polymarket::{keyword.lower()}"
+    cached = get_cached(cache_key, ttl_seconds=60 * 30)
+    if cached is not None:
+        return cached
 
+    payload: dict[str, Any]
+    try:
+        async with httpx.AsyncClient(timeout=20) as client:
+            resp = await client.get("https://gamma-api.polymarket.com/events", params={"query": keyword, "limit": 25})
+            resp.raise_for_status()
+            events = resp.json()
+        probs = []
+        labels = []
+        for event in events[:20]:
+            title = event.get("title") or ""
+            labels.append(title)
+            for market in event.get("markets", []):
+                p = market.get("outcomePrices")
+                if isinstance(p, list) and p:
+                    try:
+                        probs.append(float(p[0]))
+                    except Exception:
+                        pass
+        avg_prob = round(sum(probs) / len(probs), 4) if probs else 0.5
+        payload = {"source": "Polymarket", "keyword": keyword, "avgProbability": avg_prob, "sampleEvents": labels[:8]}
+    except Exception:
+        payload = {
+            "source": "Polymarket",
+            "keyword": keyword,
+            "avgProbability": 0.53,
+            "sampleEvents": [f"Will {keyword} rise this quarter?", f"Will macro conditions favor {keyword}?"],
+        }
+
+    set_cached(cache_key, payload)
+    return payload
+
+
+async def fetch_coinmarketcap_signal(keyword: str) -> dict[str, Any]:
+    cache_key = f"cmc::{keyword.lower()}"
+    cached = get_cached(cache_key, ttl_seconds=60 * 30)
+    if cached is not None:
+        return cached
+
+    api_key = os.getenv("COINMARKETCAP_API_KEY")
+    payload: dict[str, Any]
+    try:
+        if not api_key:
+            raise ValueError("CMC key missing")
+        async with httpx.AsyncClient(timeout=20) as client:
+            headers = {"X-CMC_PRO_API_KEY": api_key}
+            # Proxy macro sentiment through BTC, ETH, total market proxy assets
+            resp = await client.get(
+                "https://pro-api.coinmarketcap.com/v1/cryptocurrency/quotes/latest",
+                params={"symbol": "BTC,ETH,SOL"},
+                headers=headers,
+            )
+            resp.raise_for_status()
+            data = resp.json().get("data", {})
+        changes = []
+        for sym in ["BTC", "ETH", "SOL"]:
+            q = data.get(sym, {}).get("quote", {}).get("USD", {})
+            if q.get("percent_change_24h") is not None:
+                changes.append(float(q["percent_change_24h"]))
+        avg_change = round(sum(changes) / len(changes), 4) if changes else 0.0
+        normalized = max(min(avg_change / 10, 1), -1)
+        payload = {"source": "CoinMarketCap", "keyword": keyword, "avg24hChangePct": avg_change, "normalizedSignal": normalized}
+    except Exception:
+        payload = {"source": "CoinMarketCap", "keyword": keyword, "avg24hChangePct": 0.8, "normalizedSignal": 0.08}
+
+    set_cached(cache_key, payload)
+    return payload
+
+
+def sentiment_by_outlet(articles: list[dict[str, Any]], mode: str = "transformer") -> dict[str, dict[str, Any]]:
+    grouped: dict[str, dict[str, Any]] = defaultdict(lambda: {"sentimentScores": [], "headlines": [], "providers": set()})
     for article in articles:
         outlet = article.get("outlet") or "Unknown"
         provider = article.get("provider") or "Unknown"
@@ -271,13 +307,12 @@ def project_week(history: list[dict[str, Any]], score: float) -> list[dict[str, 
     volatility = (max(closes) - min(closes)) / max(curr, 1)
     drift = score * 0.35
     start = datetime.strptime(history[-1]["date"], "%Y-%m-%d")
-
-    output: list[dict[str, Any]] = []
+    out = []
     for i in range(1, 8):
         cyclical = math.sin(i / 2.1) * volatility * 0.2
         curr = curr * (1 + drift / 7 + cyclical)
-        output.append({"date": (start + timedelta(days=i)).strftime("%Y-%m-%d"), "predictedClose": round(curr, 2)})
-    return output
+        out.append({"date": (start + timedelta(days=i)).strftime("%Y-%m-%d"), "predictedClose": round(curr, 2)})
+    return out
 
 
 def transformer_week_forecast(history: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -288,17 +323,13 @@ def transformer_week_forecast(history: list[dict[str, Any]]) -> list[dict[str, A
 
         window = 14
         if len(closes) <= window:
-            raise ValueError("Insufficient history")
-
-        mean = closes.mean()
-        std = closes.std() + 1e-6
+            raise ValueError("insufficient history")
+        mean, std = closes.mean(), closes.std() + 1e-6
         norm = (closes - mean) / std
-
         xs, ys = [], []
         for i in range(len(norm) - window):
             xs.append(norm[i : i + window])
             ys.append(norm[i + window])
-
         x = torch.tensor(np.array(xs), dtype=torch.float32).unsqueeze(-1)
         y = torch.tensor(np.array(ys), dtype=torch.float32).unsqueeze(-1)
 
@@ -311,81 +342,52 @@ def transformer_week_forecast(history: list[dict[str, Any]]) -> list[dict[str, A
                 self.out = nn.Linear(16, 1)
 
             def forward(self, z: torch.Tensor) -> torch.Tensor:
-                z = self.in_proj(z)
-                z = self.encoder(z)
-                return self.out(z[:, -1, :])
+                return self.out(self.encoder(self.in_proj(z))[:, -1, :])
 
         model = TinyTransformer()
         opt = torch.optim.Adam(model.parameters(), lr=0.01)
         loss_fn = nn.MSELoss()
-        model.train()
         for _ in range(30):
             opt.zero_grad()
-            pred = model(x)
-            loss = loss_fn(pred, y)
+            loss = loss_fn(model(x), y)
             loss.backward()
             opt.step()
 
-        model.eval()
         seq = norm[-window:].tolist()
         start = datetime.strptime(history[-1]["date"], "%Y-%m-%d")
-        out: list[dict[str, Any]] = []
+        result = []
         for i in range(1, 8):
             inp = torch.tensor(seq[-window:], dtype=torch.float32).unsqueeze(0).unsqueeze(-1)
             nxt = float(model(inp).detach().numpy().squeeze())
             seq.append(nxt)
-            price = nxt * std + mean
-            out.append({"date": (start + timedelta(days=i)).strftime("%Y-%m-%d"), "predictedClose": round(float(price), 2)})
-        return out
+            result.append({"date": (start + timedelta(days=i)).strftime("%Y-%m-%d"), "predictedClose": round(float(nxt * std + mean), 2)})
+        return result
     except Exception:
-        # Fallback trend if torch/transformer is unavailable in runtime.
         slope = (closes[-1] - closes[0]) / max(len(closes) - 1, 1)
         start = datetime.strptime(history[-1]["date"], "%Y-%m-%d")
-        return [
-            {
-                "date": (start + timedelta(days=i)).strftime("%Y-%m-%d"),
-                "predictedClose": round(float(closes[-1] + slope * i), 2),
-            }
-            for i in range(1, 8)
-        ]
+        return [{"date": (start + timedelta(days=i)).strftime("%Y-%m-%d"), "predictedClose": round(float(closes[-1] + slope * i), 2)} for i in range(1, 8)]
 
 
 def fetch_earnings_data(ticker: str) -> dict[str, Any]:
     stock = yf.Ticker(ticker)
     earnings_dates = stock.get_earnings_dates(limit=4)
-    rows: list[dict[str, Any]] = []
+    rows = []
     if earnings_dates is not None and not earnings_dates.empty:
         for idx, row in earnings_dates.iterrows():
-            rows.append(
-                {
-                    "date": idx.strftime("%Y-%m-%d"),
-                    "epsEstimate": float(row.get("EPS Estimate", np.nan)) if not np.isnan(row.get("EPS Estimate", np.nan)) else None,
-                    "reportedEPS": float(row.get("Reported EPS", np.nan)) if not np.isnan(row.get("Reported EPS", np.nan)) else None,
-                    "surprisePct": float(row.get("Surprise(%)", np.nan)) if not np.isnan(row.get("Surprise(%)", np.nan)) else None,
-                }
-            )
+            rows.append({
+                "date": idx.strftime("%Y-%m-%d"),
+                "epsEstimate": float(row.get("EPS Estimate", np.nan)) if not np.isnan(row.get("EPS Estimate", np.nan)) else None,
+                "reportedEPS": float(row.get("Reported EPS", np.nan)) if not np.isnan(row.get("Reported EPS", np.nan)) else None,
+                "surprisePct": float(row.get("Surprise(%)", np.nan)) if not np.isnan(row.get("Surprise(%)", np.nan)) else None,
+            })
     return {"recentEarnings": rows}
 
 
 async def fetch_macro_data() -> dict[str, Any]:
     fred_key = os.getenv("FRED_API_KEY")
     if not fred_key:
-        return {
-            "source": "fallback",
-            "latest": {
-                "cpiYoY": 3.1,
-                "fedFunds": 5.25,
-                "unemployment": 3.9,
-                "tenYearYield": 4.15,
-            },
-        }
-
-    series = {
-        "cpiYoY": "CPIAUCSL",
-        "fedFunds": "FEDFUNDS",
-        "unemployment": "UNRATE",
-        "tenYearYield": "DGS10",
-    }
+        return {"source": "fallback", "latest": {"cpiYoY": 3.1, "fedFunds": 5.25, "unemployment": 3.9, "tenYearYield": 4.15}}
+    series = {"cpiYoY": "CPIAUCSL", "fedFunds": "FEDFUNDS", "unemployment": "UNRATE", "tenYearYield": "DGS10"}
     async with httpx.AsyncClient(timeout=20) as client:
         latest: dict[str, float | None] = {}
         for label, sid in series.items():
@@ -393,8 +395,7 @@ async def fetch_macro_data() -> dict[str, Any]:
             try:
                 resp = await client.get("https://api.stlouisfed.org/fred/series/observations", params=params)
                 resp.raise_for_status()
-                value = resp.json().get("observations", [{}])[0].get("value")
-                latest[label] = float(value)
+                latest[label] = float(resp.json().get("observations", [{}])[0].get("value"))
             except Exception:
                 latest[label] = None
     return {"source": "FRED", "latest": latest}
@@ -403,59 +404,20 @@ async def fetch_macro_data() -> dict[str, Any]:
 def fetch_options_flow(ticker: str) -> dict[str, Any]:
     stock = yf.Ticker(ticker)
     expirations = stock.options[:3]
-    data = []
+    out = []
     for exp in expirations:
         chain = stock.option_chain(exp)
         call_volume = float(chain.calls["volume"].fillna(0).sum())
         put_volume = float(chain.puts["volume"].fillna(0).sum())
-        call_oi = float(chain.calls["openInterest"].fillna(0).sum())
-        put_oi = float(chain.puts["openInterest"].fillna(0).sum())
-        data.append(
-            {
-                "expiration": exp,
-                "callVolume": call_volume,
-                "putVolume": put_volume,
-                "putCallVolumeRatio": round(put_volume / call_volume, 4) if call_volume else None,
-                "callOpenInterest": call_oi,
-                "putOpenInterest": put_oi,
-            }
-        )
-    return {"expirations": data}
-
-
-def build_forecast_payload(ticker: str, sentiment_model: str, history: list[dict[str, Any]], articles: list[dict[str, Any]]) -> dict[str, Any]:
-    sentiments = sentiment_by_outlet(articles, mode=sentiment_model)
-
-    per_outlet: dict[str, Any] = {}
-    for outlet, details in sentiments.items():
-        forecast_curve = project_week(history, details["avgSentiment"])
-        per_outlet[outlet] = {
-            **details,
-            "nextWeekForecast": forecast_curve,
-            "predictedWeekEndPrice": forecast_curve[-1]["predictedClose"],
-        }
-
-    if not per_outlet:
-        raise HTTPException(status_code=404, detail="No outlet sentiment data generated")
-
-    combined_score = sum(x["avgSentiment"] for x in per_outlet.values()) / len(per_outlet)
-    combined_forecast = project_week(history, combined_score)
-    transformer_forecast = transformer_week_forecast(history)
-    earnings = fetch_earnings_data(ticker)
-    options_flow = fetch_options_flow(ticker)
-
-    return {
-        "ticker": ticker,
-        "generatedAt": datetime.now(UTC).isoformat(),
-        "historicalPrices": history,
-        "perOutletForecast": per_outlet,
-        "combinedSentimentScore": round(combined_score, 4),
-        "combinedForecast": combined_forecast,
-        "transformerForecast": transformer_forecast,
-        "earningsData": earnings,
-        "optionsFlow": options_flow,
-        "newsProvidersUsed": sorted(list({a.get("provider", "Unknown") for a in articles})),
-    }
+        out.append({
+            "expiration": exp,
+            "callVolume": call_volume,
+            "putVolume": put_volume,
+            "putCallVolumeRatio": round(put_volume / call_volume, 4) if call_volume else None,
+            "callOpenInterest": float(chain.calls["openInterest"].fillna(0).sum()),
+            "putOpenInterest": float(chain.puts["openInterest"].fillna(0).sum()),
+        })
+    return {"expirations": out}
 
 
 class PortfolioPosition(BaseModel):
@@ -466,22 +428,111 @@ class PortfolioPosition(BaseModel):
 class PortfolioRequest(BaseModel):
     positions: list[PortfolioPosition]
     sentiment_model: str = "transformer"
+    keyword: str | None = None
+
+
+def source_weighted_curves(
+    history: list[dict[str, Any]],
+    provider_sentiment: dict[str, float],
+    polymarket_prob: float,
+    cmc_signal: float,
+) -> dict[str, list[dict[str, Any]]]:
+    curves: dict[str, list[dict[str, Any]]] = {}
+    for provider, sentiment in provider_sentiment.items():
+        curves[provider] = project_week(history, sentiment)
+
+    # External sources as synthetic score curves
+    pm_score = (polymarket_prob - 0.5) * 2
+    curves["Polymarket"] = project_week(history, pm_score)
+    curves["CoinMarketCap"] = project_week(history, cmc_signal)
+    return curves
+
+
+def combine_selected_sources(curves: dict[str, list[dict[str, Any]]], selected_sources: list[str] | None = None) -> list[dict[str, Any]]:
+    keys = selected_sources if selected_sources else list(curves.keys())
+    valid = [k for k in keys if k in curves]
+    if not valid:
+        return []
+
+    by_date: dict[str, list[float]] = defaultdict(list)
+    for key in valid:
+        for row in curves[key]:
+            by_date[row["date"]].append(row["predictedClose"])
+
+    return [{"date": d, "predictedClose": round(sum(vals) / len(vals), 2)} for d, vals in sorted(by_date.items()) if vals]
+
+
+async def build_forecast_payload(ticker: str, sentiment_model: str, history: list[dict[str, Any]], articles: list[dict[str, Any]], keyword: str | None = None) -> dict[str, Any]:
+    sentiments = sentiment_by_outlet(articles, mode=sentiment_model)
+    if not sentiments:
+        raise HTTPException(status_code=404, detail="No outlet sentiment data generated")
+
+    per_outlet: dict[str, Any] = {}
+    provider_scores: dict[str, list[float]] = defaultdict(list)
+    for outlet, details in sentiments.items():
+        curve = project_week(history, details["avgSentiment"])
+        per_outlet[outlet] = {**details, "nextWeekForecast": curve, "predictedWeekEndPrice": curve[-1]["predictedClose"]}
+        for provider in details.get("providers", []):
+            provider_scores[provider].append(details["avgSentiment"])
+
+    provider_sentiment = {k: sum(v) / len(v) for k, v in provider_scores.items() if v}
+    combined_score = sum(p["avgSentiment"] for p in per_outlet.values()) / len(per_outlet)
+
+    q = keyword or ticker
+    polymarket = await fetch_polymarket_signal(q)
+    cmc = await fetch_coinmarketcap_signal(q)
+
+    source_curves = source_weighted_curves(history, provider_sentiment, polymarket.get("avgProbability", 0.5), cmc.get("normalizedSignal", 0.0))
+    source_curves["CombinedSentiment"] = project_week(history, combined_score)
+    source_curves["TransformerTS"] = transformer_week_forecast(history)
+
+    combined_forecast = combine_selected_sources(source_curves)
+
+    return {
+        "ticker": ticker,
+        "generatedAt": datetime.now(UTC).isoformat(),
+        "historicalPrices": history,
+        "perOutletForecast": per_outlet,
+        "combinedSentimentScore": round(combined_score, 4),
+        "combinedForecast": combined_forecast,
+        "sourceForecasts": source_curves,
+        "sourceScores": {
+            **{k: round(v, 4) for k, v in provider_sentiment.items()},
+            "Polymarket": round((polymarket.get("avgProbability", 0.5) - 0.5) * 2, 4),
+            "CoinMarketCap": round(cmc.get("normalizedSignal", 0.0), 4),
+        },
+        "externalSignals": {"polymarket": polymarket, "coinmarketcap": cmc},
+        "earningsData": fetch_earnings_data(ticker),
+        "optionsFlow": fetch_options_flow(ticker),
+        "newsProvidersUsed": sorted(list({a.get("provider", "Unknown") for a in articles})),
+    }
 
 
 @app.get("/api/forecast")
-async def forecast(ticker: str = Query(..., min_length=1, max_length=10), sentiment_model: str = Query("transformer")) -> dict[str, Any]:
+async def forecast(
+    ticker: str = Query(..., min_length=1, max_length=10),
+    sentiment_model: str = Query("transformer"),
+    keyword: str | None = Query(None),
+    selected_sources: str | None = Query(None),
+) -> dict[str, Any]:
     ticker = ticker.upper().strip()
     history = fetch_month_prices(ticker)
     articles = await fetch_news(ticker)
-    payload = build_forecast_payload(ticker, sentiment_model, history, articles)
+    payload = await build_forecast_payload(ticker, sentiment_model, history, articles, keyword=keyword)
     payload["macroData"] = await fetch_macro_data()
+
+    if selected_sources:
+        keys = [x.strip() for x in selected_sources.split(",") if x.strip()]
+        custom = combine_selected_sources(payload["sourceForecasts"], keys)
+        if custom:
+            payload["combinedForecast"] = custom
+            payload["selectedSources"] = keys
 
     now = datetime.now(UTC)
     base = f"{ticker}_{now.strftime('%Y%m%d_%H%M%S')}"
     prices_path = DATA_DIR / f"{base}_past_month_prices.json"
     per_outlet_path = DATA_DIR / f"{base}_per_outlet_predictions.json"
     dashboard_path = DATA_DIR / f"{base}_dashboard_chart_data.json"
-
     save_json(prices_path, {"ticker": ticker, "window": "1m", "prices": history})
     save_json(per_outlet_path, {"ticker": ticker, "generatedAt": now.isoformat(), "perOutletForecast": payload["perOutletForecast"]})
     save_json(dashboard_path, payload)
@@ -492,6 +543,7 @@ async def forecast(ticker: str = Query(..., min_length=1, max_length=10), sentim
             "pastMonthPrices": str(prices_path.relative_to(BASE_DIR)),
             "perOutletPredictions": str(per_outlet_path.relative_to(BASE_DIR)),
             "dashboardChartData": str(dashboard_path.relative_to(BASE_DIR)),
+            "cacheStore": str(CACHE_FILE.relative_to(BASE_DIR)),
         },
         "data": payload,
     }
@@ -514,15 +566,15 @@ async def portfolio_forecast(req: PortfolioRequest) -> dict[str, Any]:
     if not req.positions:
         raise HTTPException(status_code=400, detail="Portfolio is empty")
 
-    position_payloads: list[dict[str, Any]] = []
+    positions = []
     for pos in req.positions:
         ticker = pos.ticker.upper().strip()
         history = fetch_month_prices(ticker)
         articles = await fetch_news(ticker)
-        payload = build_forecast_payload(ticker, req.sentiment_model, history, articles)
+        payload = await build_forecast_payload(ticker, req.sentiment_model, history, articles, keyword=req.keyword or ticker)
         latest = history[-1]["close"]
         next_week = payload["combinedForecast"][-1]["predictedClose"]
-        position_payloads.append(
+        positions.append(
             {
                 "ticker": ticker,
                 "shares": pos.shares,
@@ -531,33 +583,33 @@ async def portfolio_forecast(req: PortfolioRequest) -> dict[str, Any]:
                 "forecastDeltaPct": round((next_week - latest) / latest * 100, 3) if latest else 0,
                 "historicalPrices": history,
                 "combinedForecast": payload["combinedForecast"],
-                "perOutletForecast": payload["perOutletForecast"],
+                "sourceForecasts": payload["sourceForecasts"],
             }
         )
 
-    base_history = position_payloads[0]["historicalPrices"]
-    by_date: dict[str, float] = {row["date"]: 0.0 for row in base_history}
-    future_dates = {row["date"] for row in position_payloads[0]["combinedForecast"]}
-    by_future_date: dict[str, float] = {d: 0.0 for d in future_dates}
+    hist_dates = {row["date"] for p in positions for row in p["historicalPrices"]}
+    forecast_dates = {row["date"] for p in positions for row in p["combinedForecast"]}
+    hist_agg = {d: 0.0 for d in hist_dates}
+    forecast_agg = {d: 0.0 for d in forecast_dates}
 
-    for pos in position_payloads:
-        hist_map = {row["date"]: row["close"] for row in pos["historicalPrices"]}
-        fut_map = {row["date"]: row["predictedClose"] for row in pos["combinedForecast"]}
-        for d in by_date:
-            by_date[d] += hist_map.get(d, 0.0) * pos["shares"]
-        for d in by_future_date:
-            by_future_date[d] += fut_map.get(d, 0.0) * pos["shares"]
+    for p in positions:
+        hist_map = {r["date"]: r["close"] for r in p["historicalPrices"]}
+        fore_map = {r["date"]: r["predictedClose"] for r in p["combinedForecast"]}
+        for d in hist_agg:
+            hist_agg[d] += hist_map.get(d, 0.0) * p["shares"]
+        for d in forecast_agg:
+            forecast_agg[d] += fore_map.get(d, 0.0) * p["shares"]
 
-    valuation_history = [{"date": d, "value": round(v, 2)} for d, v in sorted(by_date.items())]
-    valuation_forecast = [{"date": d, "value": round(v, 2)} for d, v in sorted(by_future_date.items())]
+    history = [{"date": d, "value": round(v, 2)} for d, v in sorted(hist_agg.items())]
+    forecast = [{"date": d, "value": round(v, 2)} for d, v in sorted(forecast_agg.items())]
 
     return {
-        "positions": position_payloads,
+        "positions": positions,
         "portfolioValuation": {
-            "history": valuation_history,
-            "forecast": valuation_forecast,
-            "currentValue": valuation_history[-1]["value"],
-            "forecastWeekEndValue": valuation_forecast[-1]["value"],
+            "history": history,
+            "forecast": forecast,
+            "currentValue": history[-1]["value"] if history else 0,
+            "forecastWeekEndValue": forecast[-1]["value"] if forecast else 0,
         },
     }
 

@@ -1,21 +1,32 @@
-# Sentidex V2 - Minimalist Portfolio Forecast Dashboard
+# Sentidex V2 - Multi-Source Portfolio Forecast Dashboard
 
-## What changed
+## New focus areas
 
-- Modern minimalist dashboard redesign
-- Uses **react-stockcharts** for the center charting experience
-- Top lookup bar to add symbols to a locally stored portfolio
-- Horizontal popular tickers row with live-ish quote cards
-- Portfolio valuation chart (historical + one-week forecast) on startup
-- Dedicated portfolio page with sortable forecast outcomes
-- Click any portfolio stock to inspect an individual chart
+- **Polymarket signal integration** using keyword search (e.g. `oil`, `interest rates`, `AAPL`) to derive odds-weighted forecast influence.
+- **CoinMarketCap signal integration** (or fallback) to incorporate crypto risk-on/risk-off pressure into valuation forecasts.
+- **Source-combination overlays** on the main chart so users can estimate valuation under specific source subsets (e.g. AlphaVantage only, Polymarket+CMC, or all).
+- **Local cache store** for external data calls to reduce API usage and avoid over-polling (`backend/data/external_cache.json`).
 
-## Backend features
+## Main UX
 
-- `/api/forecast` for single ticker enriched forecast data
-- `/api/quotes/popular` for quick card quotes
-- `/api/portfolio/forecast` to aggregate portfolio valuation and projected week-end value
-- Multi-provider news + sentiment + transformer/lexicon options from prior iteration
+1. Top lookup bar for adding tickers and setting a keyword for Polymarket/CMC context.
+2. Horizontal popular ticker cards with quote snapshots.
+3. Main portfolio valuation chart with selectable source overlays via dropdown.
+4. Portfolio page with sortable positions by forecast outcome and per-stock drilldown chart.
+
+## API highlights
+
+- `GET /api/forecast?ticker=AAPL&keyword=oil&selected_sources=AlphaVantage,Polymarket`
+- `GET /api/quotes/popular`
+- `POST /api/portfolio/forecast` with body:
+
+```json
+{
+  "positions": [{ "ticker": "AAPL", "shares": 4 }],
+  "sentiment_model": "transformer",
+  "keyword": "interest rates"
+}
+```
 
 ## Run backend
 
