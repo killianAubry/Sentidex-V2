@@ -6,9 +6,15 @@ import Highcharts from 'highcharts'
 import HighchartsReact from 'highcharts-react-official'
 import HighchartsMore from 'highcharts/highcharts-more'
 
+// Fix: call the default export correctly
 if (typeof Highcharts === 'object') {
-  HighchartsMore(Highcharts)
+  // eslint-disable-next-line no-undef
+  import('highcharts/highcharts-more').then(m => {
+    const fn = m.default || m
+    if (typeof fn === 'function') fn(Highcharts)
+  })
 }
+
 
 const STORAGE_KEY = 'sentidex-portfolio-v3'
 const defaultPortfolio = [{ ticker: 'AAPL', shares: 4 }, { ticker: 'MSFT', shares: 2 }, { ticker: 'NVDA', shares: 1 }]
