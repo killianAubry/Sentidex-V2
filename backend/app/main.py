@@ -627,6 +627,7 @@ async def build_global_intelligence(keyword: str = "global markets") -> dict[str
     if cached is not None:
         return cached
 
+    kw = keyword.lower()
     companies = [
         {"ticker": "AAPL", "name": "Apple", "lat": 37.3349, "lon": -122.0090, "region": "North America"},
         {"ticker": "MSFT", "name": "Microsoft", "lat": 47.6426, "lon": -122.1396, "region": "North America"},
@@ -634,7 +635,14 @@ async def build_global_intelligence(keyword: str = "global markets") -> dict[str
         {"ticker": "TSM", "name": "TSMC", "lat": 24.8138, "lon": 120.9675, "region": "Asia"},
         {"ticker": "SHEL", "name": "Shell", "lat": 51.5072, "lon": -0.1276, "region": "Europe"},
         {"ticker": "BABA", "name": "Alibaba", "lat": 30.2741, "lon": 120.1551, "region": "Asia"},
+        {"ticker": "XOM", "name": "ExxonMobil", "lat": 32.8925, "lon": -96.9419, "region": "North America"},
+        {"ticker": "TTE", "name": "TotalEnergies", "lat": 48.8566, "lon": 2.3522, "region": "Europe"},
     ]
+
+    if "oil" in kw or "energy" in kw or "gas" in kw:
+        companies = [c for c in companies if c["ticker"] in ["SHEL", "XOM", "TTE"]]
+    elif "tech" in kw or "chip" in kw:
+        companies = [c for c in companies if c["ticker"] in ["AAPL", "MSFT", "NVDA", "TSM"]]
 
     polymarket = await fetch_polymarket_signal(keyword)
     cmc = await fetch_coinmarketcap_signal(keyword)
@@ -675,32 +683,63 @@ async def build_global_intelligence(keyword: str = "global markets") -> dict[str
             }
         )
 
-    shipping_routes = [
-        {
-            "name": "Asia -> US West Coast",
-            "from": {"lat": 31.2304, "lon": 121.4737, **project_coord(31.2304, 121.4737)},
-            "to": {"lat": 34.0522, "lon": -118.2437, **project_coord(34.0522, -118.2437)},
-            "type": "container",
-            "disruptionScore": 0.34,
-            "dayOffset": 2,
-        },
-        {
-            "name": "Middle East -> Europe",
-            "from": {"lat": 25.2048, "lon": 55.2708, **project_coord(25.2048, 55.2708)},
-            "to": {"lat": 51.5072, "lon": -0.1276, **project_coord(51.5072, -0.1276)},
-            "type": "oil-tanker",
-            "disruptionScore": 0.49,
-            "dayOffset": 5,
-        },
-        {
-            "name": "Europe -> East Coast US",
-            "from": {"lat": 52.3676, "lon": 4.9041, **project_coord(52.3676, 4.9041)},
-            "to": {"lat": 40.7128, "lon": -74.0060, **project_coord(40.7128, -74.0060)},
-            "type": "container",
-            "disruptionScore": 0.21,
-            "dayOffset": 1,
-        },
-    ]
+    if "oil" in kw or "energy" in kw or "gas" in kw:
+        shipping_routes = [
+            {
+                "name": "Middle East -> Europe",
+                "from": {"lat": 25.2048, "lon": 55.2708, **project_coord(25.2048, 55.2708)},
+                "to": {"lat": 51.5072, "lon": -0.1276, **project_coord(51.5072, -0.1276)},
+                "type": "oil-tanker",
+                "disruptionScore": 0.55,
+                "dayOffset": 1,
+            },
+            {
+                "name": "US Gulf -> Europe",
+                "from": {"lat": 29.7604, "lon": -95.3698, **project_coord(29.7604, -95.3698)},
+                "to": {"lat": 51.9225, "lon": 4.4791, **project_coord(51.9225, 4.4791)},
+                "type": "oil-tanker",
+                "disruptionScore": 0.25,
+                "dayOffset": 3,
+            }
+        ]
+    elif "tech" in kw or "chip" in kw:
+        shipping_routes = [
+            {
+                "name": "Taiwan -> US West Coast",
+                "from": {"lat": 24.8138, "lon": 120.9675, **project_coord(24.8138, 120.9675)},
+                "to": {"lat": 34.0522, "lon": -118.2437, **project_coord(34.0522, -118.2437)},
+                "type": "container",
+                "disruptionScore": 0.34,
+                "dayOffset": 2,
+            },
+            {
+                "name": "Shanghai -> Silicon Valley",
+                "from": {"lat": 31.2304, "lon": 121.4737, **project_coord(31.2304, 121.4737)},
+                "to": {"lat": 37.3382, "lon": -121.8863, **project_coord(37.3382, -121.8863)},
+                "type": "container",
+                "disruptionScore": 0.45,
+                "dayOffset": 4,
+            }
+        ]
+    else:
+        shipping_routes = [
+            {
+                "name": "Asia -> US West Coast",
+                "from": {"lat": 31.2304, "lon": 121.4737, **project_coord(31.2304, 121.4737)},
+                "to": {"lat": 34.0522, "lon": -118.2437, **project_coord(34.0522, -118.2437)},
+                "type": "container",
+                "disruptionScore": 0.34,
+                "dayOffset": 2,
+            },
+            {
+                "name": "Middle East -> Europe",
+                "from": {"lat": 25.2048, "lon": 55.2708, **project_coord(25.2048, 55.2708)},
+                "to": {"lat": 51.5072, "lon": -0.1276, **project_coord(51.5072, -0.1276)},
+                "type": "oil-tanker",
+                "disruptionScore": 0.49,
+                "dayOffset": 5,
+            },
+        ]
 
     weather_nodes = [
         {"name": "North Atlantic Storm", "lat": 46.0, "lon": -35.0, **project_coord(46.0, -35.0), "severity": 0.78, "precipitationMm": 34, "dayOffset": 3},

@@ -1,4 +1,7 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, useRef } from 'react'
+import * as d3 from 'd3'
+import * as d3geo from 'd3-geo'
+import * as topojson from 'topojson-client'
 import { ChartCanvas, Chart } from 'react-stockcharts'
 import { LineSeries } from 'react-stockcharts/lib/series'
 import { XAxis, YAxis } from 'react-stockcharts/lib/axes'
@@ -8,140 +11,12 @@ import { discontinuousTimeScaleProvider } from 'react-stockcharts/lib/scale'
 const STORAGE_KEY = 'sentidex-portfolio-v3'
 const defaultPortfolio = [{ ticker: 'AAPL', shares: 4 }, { ticker: 'MSFT', shares: 2 }, { ticker: 'NVDA', shares: 1 }]
 
+// --- Helper Functions ---
 function toSeries(history = [], forecast = [], key = 'close') {
-  return [...history.map((r) => ({ date: new Date(r.date), value: r[key] })), ...forecast.map((r) => ({ date: new Date(r.date), value: r[key] }))]
-}
-
-function StockChart({ title, history, forecast, valueKey = 'close' }) {
-  const data = useMemo(() => toSeries(history, forecast, valueKey), [history, forecast, valueKey])
-  if (!data.length) return <section className="card">No chart data.</section>
-  const xScaleProvider = discontinuousTimeScaleProvider.inputDateAccessor((d) => d.date)
-  const { data: chartData, xScale, xAccessor, displayXAccessor } = xScaleProvider(data)
-
-  return (
-    <section className="card chart-card">
-      <h2>{title}</h2>
-      <ChartCanvas width={980} height={420} ratio={1} margin={{ left: 48, right: 48, top: 16, bottom: 28 }} data={chartData} seriesName={title} xScale={xScale} xAccessor={xAccessor} displayXAccessor={displayXAccessor}>
-        <Chart id={1} yExtents={(d) => d.value}>
-          <XAxis axisAt="bottom" orient="bottom" />
-          <YAxis axisAt="left" orient="left" />
-          <MouseCoordinateX />
-          <MouseCoordinateY />
-          <LineSeries yAccessor={(d) => d.value} stroke="#2563eb" />
-        </Chart>
-        <CrossHairCursor />
-      </ChartCanvas>
-    </section>
-  )
-}
-
-function GlobeTab({ keyword }) {
-  const [data, setData] = useState(null)
-  const [time, setTime] = useState(7)
-  const [selected, setSelected] = useState(null)
-  const [layers, setLayers] = useState({ companies: true, shippingRoutes: true, weather: true, macro: true, aiSignal: true })
-
-  useEffect(() => {
-    fetch(`/api/global-intelligence?keyword=${encodeURIComponent(keyword)}`)
-      .then((r) => r.json())
-      .then((j) => setData(j.data))
-      .catch(() => setData(null))
-  }, [keyword])
-
-  const filtered = useMemo(() => {
-    if (!data) return null
-    const l = data.layers
-    return {
-      companies: (l.companies || []).filter((x) => x.dayOffset <= time),
-      shippingRoutes: (l.shippingRoutes || []).filter((x) => x.dayOffset <= time),
-      weather: (l.weather || []).filter((x) => x.dayOffset <= time),
-      macro: Object.entries(l.macro || {}).filter(([, v]) => (v.dayOffset || 0) <= time),
-      aiSignal: l.aiSignal,
-    }
-  }, [data, time])
-
-  function pxX(x) { return x * 860 + 20 }
-  function pxY(y) { return y * 420 + 20 }
-
-  function toggle(k) { setLayers((p) => ({ ...p, [k]: !p[k] })) }
-
-  return (
-    <section className="card globe-wrap">
-      <div className="row-between">
-        <h2>Global Market Intelligence Globe</h2>
-        <div>Time +{time}d</div>
-      </div>
-      <input type="range" min="0" max={data?.timeWindowDays || 14} value={time} onChange={(e) => setTime(Number(e.target.value))} />
-      <div className="layer-toggles">
-        {Object.keys(layers).map((k) => (
-          <label key={k}><input type="checkbox" checked={layers[k]} onChange={() => toggle(k)} /> {k}</label>
-        ))}
-      </div>
-
-      <svg viewBox="0 0 900 460" className="globe-svg">
-        <defs>
-          <radialGradient id="g" cx="50%" cy="45%" r="62%">
-            <stop offset="0%" stopColor="#e0f2fe" />
-            <stop offset="100%" stopColor="#93c5fd" />
-          </radialGradient>
-          <clipPath id="clip"><circle cx="450" cy="230" r="210" /></clipPath>
-        </defs>
-        <rect x="0" y="0" width="900" height="460" fill="#f8fafc" />
-        <circle cx="450" cy="230" r="210" fill="url(#g)" stroke="#cbd5e1" strokeWidth="2" />
-
-        <g clipPath="url(#clip)">
-          {[...Array(9)].map((_, i) => <line key={`lon-${i}`} x1={i * 100 + 50} y1="20" x2={i * 100 + 50} y2="440" stroke="#bfdbfe" strokeWidth="1" />)}
-          {[...Array(7)].map((_, i) => <line key={`lat-${i}`} x1="20" y1={i * 70 + 20} x2="880" y2={i * 70 + 20} stroke="#bfdbfe" strokeWidth="1" />)}
-
-          {layers.shippingRoutes && filtered?.shippingRoutes?.map((r) => (
-            <g key={r.name}>
-              <line x1={pxX(r.from.x)} y1={pxY(r.from.y)} x2={pxX(r.to.x)} y2={pxY(r.to.y)} stroke={r.disruptionScore > 0.4 ? '#ef4444' : '#f59e0b'} strokeWidth="2" strokeDasharray="6 4" />
-            </g>
-          ))}
-
-          {layers.weather && filtered?.weather?.map((w) => (
-            <circle key={w.name} cx={pxX(w.x)} cy={pxY(w.y)} r={6 + w.severity * 8} fill="rgba(59,130,246,0.35)" stroke="#1d4ed8" />
-          ))}
-
-          {layers.companies && filtered?.companies?.map((c) => (
-            <circle key={c.ticker} cx={pxX(c.x)} cy={pxY(c.y)} r={6 + c.confidence * 8} fill={c.direction === 'up' ? '#16a34a' : '#dc2626'} onClick={() => setSelected(c)} />
-          ))}
-
-          {layers.macro && filtered?.macro?.map(([k, m]) => (
-            <rect key={k} x={pxX(m.x) - 8} y={pxY(m.y) - 8} width="16" height="16" fill="#0f172a" opacity="0.75" onClick={() => setSelected({ name: k, ...m, type: 'macro' })} />
-          ))}
-        </g>
-      </svg>
-
-      {layers.aiSignal && filtered?.aiSignal && (
-        <div className="card ai-signal">
-          <strong>AI Global Signal</strong>
-          <div>Keyword: {filtered.aiSignal.keyword}</div>
-          <div>Polymarket Probability: {filtered.aiSignal.polymarketProbability}</div>
-          <div>CoinMarket Regime: {filtered.aiSignal.coinMarketRegime}</div>
-          <div>Direction Score: {filtered.aiSignal.globalDirection}</div>
-        </div>
-      )}
-
-      {selected && (
-        <div className="card marker-detail">
-          <h4>{selected.name || selected.ticker}</h4>
-          {'ticker' in selected ? (
-            <>
-              <div>Ticker: {selected.ticker}</div>
-              <div>Now: ${selected.priceNow}</div>
-              <div>Forecast: ${selected.forecastPrice}</div>
-              <div>Sentiment: {selected.sentiment}</div>
-              <div>Confidence: {selected.confidence}</div>
-              <div>Volatility: {selected.volatility}</div>
-            </>
-          ) : (
-            <pre>{JSON.stringify(selected, null, 2)}</pre>
-          )}
-        </div>
-      )}
-    </section>
-  )
+  return [
+    ...history.map((r) => ({ date: new Date(r.date), value: r[key], type: 'history' })),
+    ...forecast.map((r) => ({ date: new Date(r.date), value: r[key], type: 'forecast' }))
+  ]
 }
 
 function aggregateForecastFromSources(positions = [], selectedSources = []) {
@@ -166,17 +41,457 @@ function aggregateForecastFromSources(positions = [], selectedSources = []) {
   return Object.entries(byDate).sort((a, b) => a[0].localeCompare(b[0])).map(([date, value]) => ({ date, value: Number(value.toFixed(2)) }))
 }
 
+// --- Components ---
+
+function StockChart({ title, history, forecast, valueKey = 'close' }) {
+  const data = useMemo(() => toSeries(history, forecast, valueKey), [history, forecast, valueKey])
+  if (!data.length) return <div className="no-data">No chart data available.</div>
+
+  const xScaleProvider = discontinuousTimeScaleProvider.inputDateAccessor((d) => d.date)
+  const { data: chartData, xScale, xAccessor, displayXAccessor } = xScaleProvider(data)
+
+  return (
+    <div className="chart-container">
+      <ChartCanvas
+        width={800}
+        height={400}
+        ratio={1}
+        margin={{ left: 50, right: 50, top: 20, bottom: 30 }}
+        data={chartData}
+        seriesName={title}
+        xScale={xScale}
+        xAccessor={xAccessor}
+        displayXAccessor={displayXAccessor}
+      >
+        <Chart id={1} yExtents={(d) => d.value}>
+          <XAxis axisAt="bottom" orient="bottom" stroke="#94a3b8" tickStroke="#94a3b8" />
+          <YAxis axisAt="left" orient="left" stroke="#94a3b8" tickStroke="#94a3b8" />
+          <MouseCoordinateX />
+          <MouseCoordinateY />
+          <LineSeries yAccessor={(d) => d.value} stroke="#3b82f6" strokeWidth={2} />
+        </Chart>
+        <CrossHairCursor stroke="#94a3b8" />
+      </ChartCanvas>
+    </div>
+  )
+}
+
+function PortfolioDashboard({
+  portfolio,
+  portfolioData,
+  refresh,
+  loading,
+  lookup,
+  setLookup,
+  addTicker,
+  selectedSources,
+  toggleSource,
+  sourceOptions,
+  forecastBySelectedSources,
+  viewStates,
+  toggleViewState
+}) {
+  const sortedPositions = useMemo(() => {
+    return [...(portfolioData?.positions || [])].sort((a, b) => b.forecastDeltaPct - a.forecastDeltaPct)
+  }, [portfolioData])
+
+  // Mock separate forecasts for visualization if enabled
+  const separateLines = useMemo(() => {
+    if (!viewStates.separateForecasts) return []
+    return selectedSources.map(source => ({
+      name: source,
+      data: aggregateForecastFromSources(portfolioData?.positions || [], [source])
+    }))
+  }, [portfolioData, selectedSources, viewStates.separateForecasts])
+
+  return (
+    <div className="portfolio-dashboard">
+      <div className="dashboard-main">
+        <div className="dashboard-header">
+          <div className="ticker-lookup">
+            <input
+              value={lookup}
+              onChange={(e) => setLookup(e.target.value.toUpperCase())}
+              placeholder="Enter Ticker (e.g. AAPL)"
+            />
+            <button onClick={addTicker}>Add to Portfolio</button>
+            <button className="refresh-btn" onClick={refresh} disabled={loading}>
+              {loading ? 'Updating...' : 'Refresh Forecasts'}
+            </button>
+          </div>
+        </div>
+
+        <div className="dashboard-content">
+          <div className="center-screen">
+            <div className="chart-card card">
+              <div className="card-header">
+                <h3>Portfolio Valuation Forecast</h3>
+                <span className="source-label">Sources: {selectedSources.join(', ')}</span>
+              </div>
+              <StockChart
+                title="Portfolio Valuation"
+                history={portfolioData?.portfolioValuation?.history || []}
+                forecast={forecastBySelectedSources}
+                valueKey="value"
+              />
+              {viewStates.showConfidence && (
+                <div className="confidence-indicator">Confidence Interval: ±4.2% (95% CI)</div>
+              )}
+              {viewStates.separateForecasts && (
+                <div className="separate-forecasts-legend">
+                  {selectedSources.map(s => <span key={s} className="legend-item">{s}</span>)}
+                </div>
+              )}
+            </div>
+
+            <div className="command-center card">
+              <h4>Command Center</h4>
+              <div className="controls-grid">
+                <div className="control-group">
+                  <h5>Data Source Overlays</h5>
+                  <div className="source-toggles">
+                    {sourceOptions.map((source) => (
+                      <label key={source} className="toggle-label">
+                        <input
+                          type="checkbox"
+                          checked={selectedSources.includes(source)}
+                          onChange={() => toggleSource(source)}
+                        />
+                        {source}
+                      </label>
+                    ))}
+                  </div>
+                </div>
+                <div className="control-group">
+                  <h5>Views & Analysis</h5>
+                  <div className="view-buttons">
+                    <button
+                      className={`small-btn ${viewStates.showConfidence ? 'active' : ''}`}
+                      onClick={() => toggleViewState('showConfidence')}
+                    >
+                      Show Confidence Levels
+                    </button>
+                    <button
+                      className={`small-btn ${viewStates.separateForecasts ? 'active' : ''}`}
+                      onClick={() => toggleViewState('separateForecasts')}
+                    >
+                      Separate Forecasts
+                    </button>
+                    <button
+                      className={`small-btn ${viewStates.macroImpact ? 'active' : ''}`}
+                      onClick={() => toggleViewState('macroImpact')}
+                    >
+                      Macro Impact
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <aside className="portfolio-sidebar card">
+            <h3>Current Holdings</h3>
+            <div className="holdings-list">
+              {sortedPositions.length > 0 ? (
+                sortedPositions.map((p) => (
+                  <div key={p.ticker} className="holding-item">
+                    <div className="holding-info">
+                      <span className="ticker">{p.ticker}</span>
+                      <span className="shares">{p.shares} shares</span>
+                    </div>
+                    <div className={`forecast-delta ${p.forecastDeltaPct >= 0 ? 'pos' : 'neg'}`}>
+                      {p.forecastDeltaPct >= 0 ? '▲' : '▼'} {Math.abs(p.forecastDeltaPct)}%
+                    </div>
+                  </div>
+                ))
+              ) : (
+                <div className="empty-portfolio">No stocks in portfolio.</div>
+              )}
+            </div>
+          </aside>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function GlobalMarketIntelligence({ keyword, setKeyword }) {
+  const [data, setData] = useState(null)
+  const [time, setTime] = useState(7)
+  const [selected, setSelected] = useState(null)
+  const [layers, setLayers] = useState({ companies: true, shippingRoutes: true, weather: true, macro: true, aiSignal: true })
+  const svgRef = useRef(null)
+  const [rotation, setRotation] = useState([45, -30])
+  const [scale, setScale] = useState(250)
+  const [land, setLand] = useState(null)
+
+  useEffect(() => {
+    fetch(`/api/global-intelligence?keyword=${encodeURIComponent(keyword)}`)
+      .then((r) => r.json())
+      .then((j) => setData(j.data))
+      .catch(() => setData(null))
+  }, [keyword])
+
+  useEffect(() => {
+    fetch('https://cdn.jsdelivr.net/npm/world-atlas@2/land-110m.json')
+      .then(r => r.json())
+      .then(world => {
+        setLand(topojson.feature(world, world.objects.land))
+      })
+  }, [])
+
+  const filtered = useMemo(() => {
+    if (!data) return null
+    const l = data.layers
+    return {
+      companies: (l.companies || []).filter((x) => x.dayOffset <= time),
+      shippingRoutes: (l.shippingRoutes || []).filter((x) => x.dayOffset <= time),
+      weather: (l.weather || []).filter((x) => x.dayOffset <= time),
+      macro: Object.entries(l.macro || {}).filter(([, v]) => (v.dayOffset || 0) <= time),
+      aiSignal: l.aiSignal,
+    }
+  }, [data, time])
+
+  // D3 Projection for 3D Globe
+  const width = 800
+  const height = 600
+  const projection = d3geo.geoOrthographic()
+    .scale(scale)
+    .translate([width / 2, height / 2])
+    .rotate(rotation)
+    .clipAngle(90)
+
+  const path = d3geo.geoPath(projection)
+
+  // Drag and Zoom behavior
+  useEffect(() => {
+    const svg = d3.select(svgRef.current)
+
+    const drag = d3.drag().on('drag', (event) => {
+      setRotation(([r0, r1]) => [r0 + event.dx / 2, r1 - event.dy / 2])
+    })
+
+    const zoom = d3.zoom().on('zoom', (event) => {
+      setScale(250 * event.transform.k)
+    })
+
+    svg.call(drag)
+    svg.call(zoom)
+  }, [])
+
+  function toggle(k) { setLayers((p) => ({ ...p, [k]: !p[k] })) }
+
+  const getLinePath = (from, to) => {
+    const start = [from.lon, from.lat]
+    const end = [to.lon, to.lat]
+    return path({ type: 'LineString', coordinates: [start, end] })
+  }
+
+  return (
+    <div className="gmi-page">
+      <div className="gmi-header">
+        <div className="search-bar">
+          <input
+            value={keyword}
+            onChange={(e) => setKeyword(e.target.value)}
+            placeholder="Search commodities, companies, sectors..."
+          />
+        </div>
+        <div className="time-control">
+          <span>Time: +{time}d</span>
+          <input
+            type="range"
+            min="0"
+            max={data?.timeWindowDays || 14}
+            value={time}
+            onChange={(e) => setTime(Number(e.target.value))}
+          />
+        </div>
+      </div>
+
+      <div className="gmi-layout">
+        <div className="globe-container card">
+          <svg ref={svgRef} viewBox={`0 0 ${width} ${height}`} className="globe-3d">
+            <defs>
+              <radialGradient id="globe-grad" cx="50%" cy="40%" r="50%">
+                <stop offset="0%" stopColor="#1e293b" />
+                <stop offset="100%" stopColor="#0f172a" />
+              </radialGradient>
+            </defs>
+            <circle cx={width/2} cy={height/2} r={projection.scale()} fill="url(#globe-grad)" />
+
+            {/* Graticule */}
+            <path d={path(d3geo.geoGraticule()())} fill="none" stroke="#475569" strokeWidth="0.5" />
+
+            {/* Land */}
+            {land && (
+              <path d={path(land)} fill="rgba(255,255,255,0.05)" stroke="#475569" strokeWidth="0.5" />
+            )}
+
+            {/* Supply Chain Routes */}
+            {layers.shippingRoutes && filtered?.shippingRoutes?.map((r, i) => {
+              const d = getLinePath(r.from, r.to)
+              if (!d) return null
+              return (
+                <path
+                  key={`route-${i}`}
+                  d={d}
+                  fill="none"
+                  stroke={r.disruptionScore > 0.4 ? '#ef4444' : '#60a5fa'}
+                  strokeWidth="2"
+                  strokeDasharray="4 2"
+                  opacity="0.8"
+                />
+              )
+            })}
+
+            {/* Nodes / Markers */}
+            <g className="markers">
+              {layers.companies && filtered?.companies?.map((c) => {
+                const coords = projection([c.lon, c.lat])
+                const isVisible = d3geo.geoDistance(projection.invert([width/2, height/2]), [c.lon, c.lat]) < Math.PI / 2
+                if (!coords || !isVisible) return null
+                return (
+                  <circle
+                    key={c.ticker}
+                    cx={coords[0]}
+                    cy={coords[1]}
+                    r={6}
+                    fill={c.direction === 'up' ? '#22c55e' : '#ef4444'}
+                    stroke="#fff"
+                    strokeWidth="1"
+                    onClick={() => setSelected(c)}
+                    className="node-marker"
+                  />
+                )
+              })}
+
+              {layers.weather && filtered?.weather?.map((w, i) => {
+                const coords = projection([w.lon, w.lat])
+                const isVisible = d3geo.geoDistance(projection.invert([width/2, height/2]), [w.lon, w.lat]) < Math.PI / 2
+                if (!coords || !isVisible) return null
+                return (
+                  <circle
+                    key={`weather-${i}`}
+                    cx={coords[0]}
+                    cy={coords[1]}
+                    r={10}
+                    fill="rgba(96, 165, 250, 0.5)"
+                    stroke="#60a5fa"
+                    strokeWidth="2"
+                    onClick={() => setSelected({ ...w, type: 'weather' })}
+                    className="node-marker"
+                  />
+                )
+              })}
+
+              {layers.macro && filtered?.macro?.map(([k, m], i) => {
+                const coords = projection([m.lon, m.lat])
+                const isVisible = d3geo.geoDistance(projection.invert([width/2, height/2]), [m.lon, m.lat]) < Math.PI / 2
+                if (!coords || !isVisible) return null
+                return (
+                  <rect
+                    key={`macro-${i}`}
+                    x={coords[0] - 6}
+                    y={coords[1] - 6}
+                    width="12"
+                    height="12"
+                    fill="#f59e0b"
+                    stroke="#fff"
+                    strokeWidth="1"
+                    onClick={() => setSelected({ name: k, ...m, type: 'macro' })}
+                    className="node-marker"
+                  />
+                )
+              })}
+            </g>
+          </svg>
+        </div>
+
+        <aside className="gmi-sidebar">
+          <div className="layer-controls card">
+            <h4>Intelligence Layers</h4>
+            <div className="layer-toggles">
+              {Object.keys(layers).map((k) => (
+                <label key={k} className="toggle-label">
+                  <input type="checkbox" checked={layers[k]} onChange={() => toggle(k)} />
+                  {k.replace(/([A-Z])/g, ' $1').replace(/^./, str => str.toUpperCase())}
+                </label>
+              ))}
+            </div>
+          </div>
+
+          {selected && (
+            <div className="detail-panel card">
+              <h4>{selected.name || selected.ticker}</h4>
+              <div className="detail-content">
+                {selected.type === 'weather' ? (
+                  <>
+                    <p>Severity: {(selected.severity * 100).toFixed(0)}%</p>
+                    {selected.tempC && <p>Temp: {selected.tempC}°C</p>}
+                    {selected.precipitationMm && <p>Precipitation: {selected.precipitationMm}mm</p>}
+                  </>
+                ) : selected.type === 'macro' ? (
+                  <>
+                    <p>Interest Rate: {selected.interestRate}%</p>
+                    <p>Inflation: {selected.inflation}%</p>
+                    <p>GDP Growth: {selected.gdpGrowth}%</p>
+                  </>
+                ) : (
+                  <>
+                    <p>Price: ${selected.priceNow}</p>
+                    <p>Forecast: ${selected.forecastPrice}</p>
+                    <p>Sentiment: {selected.sentiment}</p>
+                    <p>Confidence: {(selected.confidence * 100).toFixed(0)}%</p>
+                  </>
+                )}
+              </div>
+              <button className="close-btn" onClick={() => setSelected(null)}>Close</button>
+            </div>
+          )}
+
+          {layers.aiSignal && filtered?.aiSignal && (
+            <div className="ai-signal-panel card">
+              <h4>AI Global Signal</h4>
+              <div className="signal-data">
+                <div className="signal-item">
+                  <span className="label">Keyword</span>
+                  <span className="value">{filtered.aiSignal.keyword}</span>
+                </div>
+                <div className="signal-item">
+                  <span className="label">Polymarket Prob</span>
+                  <span className="value">{(filtered.aiSignal.polymarketProbability * 100).toFixed(1)}%</span>
+                </div>
+                <div className="signal-item">
+                  <span className="label">Global Direction</span>
+                  <span className="value">{(filtered.aiSignal.globalDirection * 100).toFixed(1)}</span>
+                </div>
+              </div>
+            </div>
+          )}
+        </aside>
+      </div>
+    </div>
+  )
+}
+
 export function App() {
-  const [page, setPage] = useState('dashboard')
+  const [page, setPage] = useState('portfolio')
   const [portfolio, setPortfolio] = useState(defaultPortfolio)
   const [portfolioData, setPortfolioData] = useState(null)
-  const [popular, setPopular] = useState([])
-  const [selectedTicker, setSelectedTicker] = useState('AAPL')
   const [lookup, setLookup] = useState('AAPL')
   const [keyword, setKeyword] = useState('interest rates')
-  const [sortMode, setSortMode] = useState('best')
-  const [selectedSources, setSelectedSources] = useState([])
+  const [selectedSources, setSelectedSources] = useState(['CombinedSentiment'])
   const [loading, setLoading] = useState(false)
+  const [viewStates, setViewStates] = useState({
+    showConfidence: false,
+    separateForecasts: false,
+    macroImpact: false
+  })
+
+  function toggleViewState(key) {
+    setViewStates(prev => ({ ...prev, [key]: !prev[key] }))
+  }
 
   useEffect(() => {
     const raw = localStorage.getItem(STORAGE_KEY)
@@ -187,39 +502,46 @@ export function App() {
       } catch { }
     }
   }, [])
-  useEffect(() => { localStorage.setItem(STORAGE_KEY, JSON.stringify(portfolio)) }, [portfolio])
-  useEffect(() => { fetch('/api/quotes/popular').then((r) => r.json()).then((j) => setPopular(j.quotes || [])).catch(() => setPopular([])) }, [])
+
+  useEffect(() => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(portfolio))
+  }, [portfolio])
 
   async function refresh() {
     setLoading(true)
     try {
-      const res = await fetch('/api/portfolio/forecast', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ positions: portfolio, sentiment_model: 'transformer', keyword }) })
+      const res = await fetch('/api/portfolio/forecast', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ positions: portfolio, sentiment_model: 'transformer', keyword })
+      })
       const json = await res.json()
       setPortfolioData(json)
-      if (json?.positions?.length && !selectedTicker) setSelectedTicker(json.positions[0].ticker)
-    } finally { setLoading(false) }
+    } finally {
+      setLoading(false)
+    }
   }
 
-  useEffect(() => { if (portfolio.length) refresh() }, [portfolio])
+  useEffect(() => {
+    if (portfolio.length) refresh()
+  }, [portfolio])
 
   const sourceOptions = useMemo(() => {
     const found = new Set()
-    for (const p of portfolioData?.positions || []) Object.keys(p.sourceForecasts || {}).forEach((k) => found.add(k))
+    for (const p of portfolioData?.positions || []) {
+      Object.keys(p.sourceForecasts || {}).forEach((k) => found.add(k))
+    }
     return Array.from(found).sort()
   }, [portfolioData])
-  useEffect(() => { if (sourceOptions.length && !selectedSources.length) setSelectedSources(['CombinedSentiment']) }, [sourceOptions])
 
-  const forecastBySelectedSources = useMemo(() => aggregateForecastFromSources(portfolioData?.positions || [], selectedSources), [portfolioData, selectedSources])
-  const sortedPositions = useMemo(() => {
-    const list = [...(portfolioData?.positions || [])]
-    if (sortMode === 'best') list.sort((a, b) => b.forecastDeltaPct - a.forecastDeltaPct)
-    else if (sortMode === 'worst') list.sort((a, b) => a.forecastDeltaPct - b.forecastDeltaPct)
-    else list.sort((a, b) => a.ticker.localeCompare(b.ticker))
-    return list
-  }, [portfolioData, sortMode])
-  const selectedPosition = sortedPositions.find((x) => x.ticker === selectedTicker)
+  const forecastBySelectedSources = useMemo(() =>
+    aggregateForecastFromSources(portfolioData?.positions || [], selectedSources),
+  [portfolioData, selectedSources])
 
-  function toggleSource(source) { setSelectedSources((p) => (p.includes(source) ? p.filter((x) => x !== source) : [...p, source])) }
+  function toggleSource(source) {
+    setSelectedSources((p) => (p.includes(source) ? p.filter((x) => x !== source) : [...p, source]))
+  }
+
   function addTicker() {
     const ticker = lookup.trim().toUpperCase()
     if (!ticker || portfolio.some((p) => p.ticker === ticker)) return
@@ -227,65 +549,49 @@ export function App() {
   }
 
   return (
-    <main className="minimal-dashboard">
-      <header className="topbar">
-        <div className="brand">Sentidex</div>
-        <div className="lookup-row">
-          <input value={lookup} onChange={(e) => setLookup(e.target.value.toUpperCase())} placeholder="Lookup ticker" />
-          <input value={keyword} onChange={(e) => setKeyword(e.target.value)} placeholder="Global keyword (oil, rates, AAPL)" />
-          <button onClick={addTicker}>Add</button>
-          <button onClick={refresh} disabled={loading}>{loading ? 'Refreshing...' : 'Forecast'}</button>
+    <div className="app-container">
+      <nav className="navbar">
+        <div className="nav-brand">SENTIDEX <span className="pro-tag">PRO</span></div>
+        <div className="nav-links">
+          <button
+            className={page === 'portfolio' ? 'active' : ''}
+            onClick={() => setPage('portfolio')}
+          >
+            Portfolio
+          </button>
+          <button
+            className={page === 'gmi' ? 'active' : ''}
+            onClick={() => setPage('gmi')}
+          >
+            GMI
+          </button>
         </div>
-        <nav>
-          <button className={page === 'dashboard' ? 'active' : ''} onClick={() => setPage('dashboard')}>Dashboard</button>
-          <button className={page === 'portfolio' ? 'active' : ''} onClick={() => setPage('portfolio')}>Portfolio</button>
-          <button className={page === 'globe' ? 'active' : ''} onClick={() => setPage('globe')}>Global Intel Globe</button>
-        </nav>
-      </header>
+      </nav>
 
-      <section className="popular-row">
-        {popular.map((q) => <article key={q.ticker} className="ticker-card" onClick={() => setLookup(q.ticker)}><h4>{q.ticker}</h4><p>${q.price}</p></article>)}
-      </section>
-
-      {page !== 'globe' && (
-        <section className="card source-dropdown">
-          <h3>Data source overlays</h3>
-          <details>
-            <summary>Select one or many sources</summary>
-            <div className="source-grid">
-              {sourceOptions.map((source) => <label key={source}><input type="checkbox" checked={selectedSources.includes(source)} onChange={() => toggleSource(source)} /> {source}</label>)}
-            </div>
-          </details>
-        </section>
-      )}
-
-      {page === 'dashboard' ? (
-        <>
-          <StockChart title={`Portfolio valuation weighted by: ${selectedSources.join(', ') || 'CombinedSentiment'}`} history={portfolioData?.portfolioValuation?.history || []} forecast={forecastBySelectedSources} valueKey="value" />
-          <section className="card stats-grid">
-            <div><h4>Current Value</h4><p>${portfolioData?.portfolioValuation?.currentValue ?? '-'}</p></div>
-            <div><h4>Selected-Source Week End</h4><p>${forecastBySelectedSources?.[forecastBySelectedSources.length - 1]?.value ?? '-'}</p></div>
-            <div><h4>Portfolio Size</h4><p>{portfolio.length}</p></div>
-          </section>
-        </>
-      ) : page === 'portfolio' ? (
-        <section className="portfolio-layout">
-          <aside className="card portfolio-list">
-            <div className="row-between">
-              <h3>Positions</h3>
-              <select value={sortMode} onChange={(e) => setSortMode(e.target.value)}>
-                <option value="best">Best forecast</option>
-                <option value="worst">Worst forecast</option>
-                <option value="alpha">A-Z</option>
-              </select>
-            </div>
-            {sortedPositions.map((p) => <button key={p.ticker} className="position-btn" onClick={() => setSelectedTicker(p.ticker)}><span>{p.ticker} ({p.shares} sh)</span><strong>{p.forecastDeltaPct}%</strong></button>)}
-          </aside>
-          <StockChart title={selectedPosition ? `${selectedPosition.ticker} chart` : 'Select a stock'} history={selectedPosition?.historicalPrices || []} forecast={(selectedPosition?.combinedForecast || []).map((r) => ({ date: r.date, close: r.predictedClose }))} valueKey="close" />
-        </section>
-      ) : (
-        <GlobeTab keyword={keyword} />
-      )}
-    </main>
+      <main className="main-content">
+        {page === 'portfolio' ? (
+          <PortfolioDashboard
+            portfolio={portfolio}
+            portfolioData={portfolioData}
+            refresh={refresh}
+            loading={loading}
+            lookup={lookup}
+            setLookup={setLookup}
+            addTicker={addTicker}
+            selectedSources={selectedSources}
+            toggleSource={toggleSource}
+            sourceOptions={sourceOptions}
+            forecastBySelectedSources={forecastBySelectedSources}
+            viewStates={viewStates}
+            toggleViewState={toggleViewState}
+          />
+        ) : (
+          <GlobalMarketIntelligence
+            keyword={keyword}
+            setKeyword={setKeyword}
+          />
+        )}
+      </main>
+    </div>
   )
 }
