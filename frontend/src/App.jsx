@@ -1,9 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
-import { ChartCanvas, Chart } from 'react-stockcharts'
-import { LineSeries } from 'react-stockcharts/lib/series'
-import { XAxis, YAxis } from 'react-stockcharts/lib/axes'
-import { CrossHairCursor, MouseCoordinateX, MouseCoordinateY } from 'react-stockcharts/lib/coordinates'
-import { discontinuousTimeScaleProvider } from 'react-stockcharts/lib/scale'
+import {
+  ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid,
+} from 'recharts'
 
 const STORAGE_KEY = 'sentidex-portfolio-v1'
 
@@ -25,32 +23,24 @@ function MinimalStockChart({ title, history = [], forecast = [], valueKey = 'clo
 
   if (!data.length) return <div className="card">No data available.</div>
 
-  const xScaleProvider = discontinuousTimeScaleProvider.inputDateAccessor((d) => d.date)
-  const { data: chartData, xScale, xAccessor, displayXAccessor } = xScaleProvider(data)
+  const fmt = (d) => new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
 
   return (
     <section className="card chart-card">
       <h2>{title}</h2>
-      <ChartCanvas
-        width={980}
-        height={440}
-        ratio={1}
-        margin={{ left: 50, right: 50, top: 20, bottom: 30 }}
-        data={chartData}
-        seriesName={title}
-        xScale={xScale}
-        xAccessor={xAccessor}
-        displayXAccessor={displayXAccessor}
-      >
-        <Chart id={1} yExtents={(d) => d.value}>
-          <XAxis axisAt="bottom" orient="bottom" />
-          <YAxis axisAt="left" orient="left" />
-          <MouseCoordinateX />
-          <MouseCoordinateY />
-          <LineSeries yAccessor={(d) => d.value} stroke="#0ea5e9" />
-        </Chart>
-        <CrossHairCursor />
-      </ChartCanvas>
+      <ResponsiveContainer width="100%" height={440}>
+        <LineChart data={data} margin={{ left: 10, right: 20, top: 10, bottom: 10 }}>
+          <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
+          <XAxis dataKey="date" tickFormatter={fmt} tick={{ fill: '#94a3b8', fontSize: 12 }} />
+          <YAxis tick={{ fill: '#94a3b8', fontSize: 12 }} domain={['auto', 'auto']} />
+          <Tooltip
+            contentStyle={{ background: '#0f172a', border: '1px solid #334155', color: '#e2e8f0' }}
+            labelFormatter={fmt}
+            formatter={(v) => [`$${Number(v).toFixed(2)}`, 'Value']}
+          />
+          <Line type="monotone" dataKey="value" stroke="#0ea5e9" dot={false} strokeWidth={2} />
+        </LineChart>
+      </ResponsiveContainer>
     </section>
   )
 }
