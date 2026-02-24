@@ -1,63 +1,95 @@
 import { useMemo, useState } from 'react'
+import {
+  Chart,
+  ChartCanvas,
+  LineSeries,
+  XAxis,
+  YAxis,
+  discontinuousTimeScaleProviderBuilder,
+  MouseCoordinateX,
+  MouseCoordinateY,
+  CrossHairCursor,
+} from 'react-financial-charts'
+import { timeFormat } from 'd3-time-format'
+import { format } from 'd3-format'
 
-function LineChart({ history, forecast, label }) {
-  const allPoints = [...history.map((p) => ({ ...p, v: p.close })), ...forecast.map((p) => ({ ...p, v: p.predictedClose }))]
-  const width = 900
-  const height = 320
-  const pad = 32
-  const min = Math.min(...allPoints.map((p) => p.v))
-  const max = Math.max(...allPoints.map((p) => p.v))
+function buildSeries(history = [], forecast = []) {
+  return [
+    ...history.map((x) => ({ date: new Date(x.date), close: x.close, kind: 'history' })),
+    ...forecast.map((x) => ({ date: new Date(x.date), close: x.predictedClose, kind: 'forecast' })),
+  ]
+}
 
-  const points = allPoints
-    .map((p, i) => {
-      const x = pad + (i / Math.max(allPoints.length - 1, 1)) * (width - pad * 2)
-      const y = height - pad - ((p.v - min) / Math.max(max - min, 1e-6)) * (height - pad * 2)
-      return `${x},${y}`
-    })
-    .join(' ')
+function StockCenterChart({ history, combinedForecast, transformerForecast, selectedOutletForecast, mode, showTransformer }) {
+  const chartData = useMemo(() => {
+    const outletSeries = mode === 'outlet' ? selectedOutletForecast : combinedForecast
+    return buildSeries(history, outletSeries)
+  }, [history, combinedForecast, selectedOutletForecast, mode])
 
-  const dividerIndex = history.length - 1
-  const dividerX = pad + (dividerIndex / Math.max(allPoints.length - 1, 1)) * (width - pad * 2)
+  if (!chartData.length) return <div className="panel">No chart data yet.</div>
+
+  const xScaleProvider = discontinuousTimeScaleProviderBuilder().inputDateAccessor((d) => d.date)
+  const { data, xScale, xAccessor, displayXAccessor } = xScaleProvider(chartData)
+  const transformer = showTransformer ? buildSeries(history, transformerForecast) : []
+  const txScaled = transformer.length ? xScaleProvider(transformer).data : []
 
   return (
-    <div>
-      <h3>{label}</h3>
-      <svg viewBox={`0 0 ${width} ${height}`} className="chart">
-        <polyline fill="none" stroke="#4f46e5" strokeWidth="3" points={points} />
-        <line x1={dividerX} y1={pad / 2} x2={dividerX} y2={height - pad / 2} stroke="#ef4444" strokeDasharray="6 6" />
-        <text x={dividerX + 6} y={pad} fill="#ef4444" fontSize="12">Forecast starts</text>
-      </svg>
-      <small>
-        Range: ${min.toFixed(2)} - ${max.toFixed(2)}
-      </small>
+    <div className="panel chart-panel">
+      <h2>Price + Forecast</h2>
+      <ChartCanvas height={460} width={900} ratio={1} margin={{ left: 60, right: 60, top: 20, bottom: 30 }}
+        data={data} seriesName="Price" xScale={xScale} xAccessor={xAccessor} displayXAccessor={displayXAccessor}>
+        <Chart id={1} yExtents={(d) => d.close}>
+          <XAxis />
+          <YAxis />
+          <MouseCoordinateX displayFormat={timeFormat('%Y-%m-%d')} />
+          <MouseCoordinateY displayFormat={format('.2f')} />
+          <LineSeries yAccessor={(d) => d.close} strokeStyle="#22d3ee" />
+          {showTransformer && txScaled.length > 0 && (
+            <LineSeries data={txScaled} yAccessor={(d) => d.close} strokeStyle="#f59e0b" />
+          )}
+        </Chart>
+        <CrossHairCursor />
+      </ChartCanvas>
+      <p className="muted">Cyan line = selected sentiment forecast. Amber line = transformer forecast.</p>
     </div>
   )
 }
 
 export function App() {
   const [ticker, setTicker] = useState('AAPL')
-  const [result, setResult] = useState(null)
+  const [response, setResponse] = useState(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
-  const [view, setView] = useState('combined')
+
+  const [mode, setMode] = useState('combined')
+  const [sentimentModel, setSentimentModel] = useState('transformer')
   const [selectedOutlet, setSelectedOutlet] = useState('')
+  const [showTransformer, setShowTransformer] = useState(true)
+  const [showMacro, setShowMacro] = useState(true)
+  const [showEarnings, setShowEarnings] = useState(true)
+  const [showOptionsFlow, setShowOptionsFlow] = useState(true)
 
   const outlets = useMemo(() => {
-    if (!result) return []
-    return Object.keys(result.data.combinedChartData.perOutletForecast)
-  }, [result])
+    if (!response) return []
+    return Object.keys(response.data.perOutletForecast)
+  }, [response])
 
-  async function runForecast(e) {
+  const data = response?.data
+  const history = data?.historicalPrices || []
+  const combinedForecast = data?.combinedForecast || []
+  const transformerForecast = data?.transformerForecast || []
+  const selectedOutletForecast = selectedOutlet ? data?.perOutletForecast?.[selectedOutlet]?.nextWeekForecast || [] : []
+
+  async function onSubmit(e) {
     e.preventDefault()
     setLoading(true)
     setError('')
-    setResult(null)
     try {
-      const res = await fetch(`/api/forecast?ticker=${encodeURIComponent(ticker)}`)
-      if (!res.ok) throw new Error(`Request failed (${res.status})`)
-      const json = await res.json()
-      setResult(json)
-      const firstOutlet = Object.keys(json.data.combinedChartData.perOutletForecast)[0]
+      const r = await fetch(`/api/forecast?ticker=${encodeURIComponent(ticker)}&sentiment_model=${sentimentModel}`)
+      if (!r.ok) throw new Error(`Forecast request failed (${r.status})`)
+      const json = await r.json()
+      setResponse(json)
+      const firstOutlet = Object.keys(json.data.perOutletForecast)[0]
       setSelectedOutlet(firstOutlet || '')
     } catch (err) {
       setError(err.message)
@@ -66,52 +98,79 @@ export function App() {
     }
   }
 
-  const history = result?.data?.combinedChartData?.historicalPrices || []
-  const combinedForecast = result?.data?.combinedChartData?.combinedForecast || []
-  const outletData = selectedOutlet ? result?.data?.combinedChartData?.perOutletForecast?.[selectedOutlet] : null
-
   return (
-    <main className="container">
-      <h1>Sentidex Stock Forecast</h1>
-      <p>Generate per-news-outlet sentiment forecasts and a combined one-week outlook.</p>
+    <main className="dashboard">
+      <header className="panel">
+        <h1>Sentidex Pro Terminal</h1>
+        <form className="toolbar" onSubmit={onSubmit}>
+          <input value={ticker} onChange={(e) => setTicker(e.target.value.toUpperCase())} placeholder="Ticker" />
+          <select value={sentimentModel} onChange={(e) => setSentimentModel(e.target.value)}>
+            <option value="transformer">Transformer sentiment</option>
+            <option value="lexicon">Lexicon sentiment</option>
+          </select>
+          <button type="submit" disabled={loading}>{loading ? 'Running...' : 'Run Forecast'}</button>
+        </form>
+        {error && <p className="error">{error}</p>}
+      </header>
 
-      <form onSubmit={runForecast} className="row">
-        <input value={ticker} onChange={(e) => setTicker(e.target.value.toUpperCase())} placeholder="Ticker (e.g. TSLA)" />
-        <button type="submit" disabled={loading}>{loading ? 'Running...' : 'Forecast'}</button>
-      </form>
+      <section className="layout">
+        <aside className="panel side">
+          <h3>Forecast Controls</h3>
+          <label><input type="radio" checked={mode === 'combined'} onChange={() => setMode('combined')} /> Combined sentiment</label>
+          <label><input type="radio" checked={mode === 'outlet'} onChange={() => setMode('outlet')} /> By outlet</label>
+          {mode === 'outlet' && (
+            <select value={selectedOutlet} onChange={(e) => setSelectedOutlet(e.target.value)}>
+              {outlets.map((outlet) => <option key={outlet}>{outlet}</option>)}
+            </select>
+          )}
+          <hr />
+          <h3>Feature Toggles</h3>
+          <label><input type="checkbox" checked={showTransformer} onChange={() => setShowTransformer((v) => !v)} /> Transformer forecast overlay</label>
+          <label><input type="checkbox" checked={showMacro} onChange={() => setShowMacro((v) => !v)} /> Macro panel</label>
+          <label><input type="checkbox" checked={showEarnings} onChange={() => setShowEarnings((v) => !v)} /> Earnings panel</label>
+          <label><input type="checkbox" checked={showOptionsFlow} onChange={() => setShowOptionsFlow((v) => !v)} /> Options flow panel</label>
+        </aside>
 
-      {error && <p className="error">{error}</p>}
+        <StockCenterChart
+          history={history}
+          combinedForecast={combinedForecast}
+          transformerForecast={transformerForecast}
+          selectedOutletForecast={selectedOutletForecast}
+          mode={mode}
+          showTransformer={showTransformer}
+        />
 
-      {result && (
-        <section>
-          <div className="row">
-            <button onClick={() => setView('combined')} className={view === 'combined' ? 'active' : ''}>Combined sentiment</button>
-            <button onClick={() => setView('outlet')} className={view === 'outlet' ? 'active' : ''}>Individual outlets</button>
-            {view === 'outlet' && (
-              <select value={selectedOutlet} onChange={(e) => setSelectedOutlet(e.target.value)}>
-                {outlets.map((outlet) => <option key={outlet}>{outlet}</option>)}
-              </select>
-            )}
-          </div>
+        <aside className="panel side right">
+          <h3>Providers Used</h3>
+          <ul>{(data?.newsProvidersUsed || []).map((x) => <li key={x}>{x}</li>)}</ul>
 
-          {view === 'combined' ? (
-            <LineChart
-              history={history}
-              forecast={combinedForecast}
-              label={`Combined Sentiment Score: ${result.data.combinedChartData.combinedSentimentScore}`}
-            />
-          ) : (
-            outletData && (
-              <LineChart
-                history={history}
-                forecast={outletData.nextWeekForecast}
-                label={`${selectedOutlet} sentiment: ${outletData.avgSentiment}`}
-              />
-            )
+          {showMacro && data?.macroData && (
+            <div>
+              <h3>Macro</h3>
+              <pre>{JSON.stringify(data.macroData, null, 2)}</pre>
+            </div>
           )}
 
+          {showEarnings && data?.earningsData && (
+            <div>
+              <h3>Earnings</h3>
+              <pre>{JSON.stringify(data.earningsData, null, 2)}</pre>
+            </div>
+          )}
+
+          {showOptionsFlow && data?.optionsFlow && (
+            <div>
+              <h3>Options Flow</h3>
+              <pre>{JSON.stringify(data.optionsFlow, null, 2)}</pre>
+            </div>
+          )}
+        </aside>
+      </section>
+
+      {response && (
+        <section className="panel">
           <h3>Generated JSON files</h3>
-          <pre>{JSON.stringify(result.files, null, 2)}</pre>
+          <pre>{JSON.stringify(response.files, null, 2)}</pre>
         </section>
       )}
     </main>

@@ -1,18 +1,26 @@
-# Sentidex V2 - Stock Forecasting App
+# Sentidex V2 - Advanced Stock Intelligence Dashboard
 
-Python + React app that:
+This app now includes:
 
-1. Accepts a stock ticker.
-2. Pulls the last month of price history.
-3. Pulls financial news headlines.
-4. Scores sentiment per outlet.
-5. Generates next-week predicted prices per outlet + combined sentiment.
-6. Writes 3 JSON files:
-   - past month prices
-   - per-outlet predictions
-   - combined chart data
+- **Multi-source news ingestion** (free-tier capable API providers):
+  - NewsAPI (`NEWS_API_KEY`)
+  - GNews (`GNEWS_API_KEY`)
+  - Finnhub (`FINNHUB_API_KEY`)
+  - Alpha Vantage (`ALPHAVANTAGE_API_KEY`)
+- **Sentiment engine choices**:
+  - Transformer sentiment (FinBERT, falls back if unavailable)
+  - Lexicon sentiment
+- **Forecasting tracks**:
+  - Per-outlet sentiment 1-week projection
+  - Combined sentiment 1-week projection
+  - Transformer time-series 1-week projection
+- **Additional datasets**:
+  - Earnings data (via yfinance)
+  - Macro data (FRED if `FRED_API_KEY` exists, fallback snapshot otherwise)
+  - Options flow summary (put/call volume + open interest)
+- **Comprehensive dashboard toggles** with center chart using **react-financial-charts** (React stock chart component family).
 
-## Backend (FastAPI)
+## Backend setup
 
 ```bash
 cd backend
@@ -22,11 +30,7 @@ pip install -r requirements.txt
 uvicorn app.main:app --reload --port 8000
 ```
 
-Optional env var:
-
-- `NEWS_API_KEY` (if unset, sample fallback articles are used)
-
-## Frontend (React + Vite)
+## Frontend setup
 
 ```bash
 cd frontend
@@ -36,9 +40,12 @@ npm run dev
 
 Open `http://localhost:5173`.
 
-## API response shape
+## API output files
 
-`GET /api/forecast?ticker=AAPL` returns:
+`GET /api/forecast?ticker=AAPL` writes:
 
-- file paths for generated JSON files in `backend/data/`
-- full JSON payload for UI rendering
+1. `*_past_month_prices.json`
+2. `*_per_outlet_predictions.json`
+3. `*_dashboard_chart_data.json`
+
+All under `backend/data/`.
