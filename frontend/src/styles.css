@@ -1,0 +1,51 @@
+:root {
+  font-family: Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  color: #0f172a;
+  background: #f8fafc;
+}
+
+body { margin: 0; background: #f8fafc; }
+
+.minimal-dashboard { max-width: 1320px; margin: 0 auto; padding: 20px; display: grid; gap: 16px; }
+.topbar { display: grid; grid-template-columns: 140px 1fr auto; gap: 12px; align-items: center; }
+.brand { font-weight: 700; font-size: 1.2rem; }
+.lookup { display: flex; gap: 8px; }
+
+input, button, select {
+  border: 1px solid #e2e8f0;
+  background: white;
+  border-radius: 10px;
+  padding: 10px 12px;
+  font-size: 0.92rem;
+}
+button.active { background: #0f172a; color: white; }
+
+.popular-row { display: grid; grid-template-columns: repeat(8, minmax(120px, 1fr)); gap: 10px; }
+.ticker-card {
+  background: white;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  padding: 12px;
+  cursor: pointer;
+}
+.ticker-card h4, .ticker-card p { margin: 0; }
+.ticker-card p { margin-top: 8px; font-weight: 600; }
+
+.card { background: white; border: 1px solid #e2e8f0; border-radius: 14px; padding: 14px; }
+.chart-card { display: grid; place-items: center; }
+.stats-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+
+.portfolio-layout { display: grid; grid-template-columns: 320px 1fr; gap: 14px; }
+.portfolio-list { display: grid; gap: 8px; align-content: start; }
+.position-btn {
+  display: flex; justify-content: space-between; align-items: center;
+  width: 100%; text-align: left; background: #f8fafc;
+}
+.row-between { display: flex; justify-content: space-between; align-items: center; }
+
+@media (max-width: 1100px) {
+  .topbar { grid-template-columns: 1fr; }
+  .popular-row { grid-template-columns: repeat(3, minmax(120px, 1fr)); }
+  .portfolio-layout { grid-template-columns: 1fr; }
+  .stats-grid { grid-template-columns: 1fr; }
+}
