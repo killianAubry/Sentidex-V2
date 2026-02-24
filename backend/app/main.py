@@ -15,6 +15,10 @@ import yfinance as yf
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
+try:
+    from groq import Groq
+except ImportError:
+    Groq = None
 
 BASE_DIR = Path(__file__).resolve().parents[1]
 DATA_DIR = BASE_DIR / "data"
@@ -621,6 +625,42 @@ def project_coord(lat: float, lon: float) -> dict[str, float]:
     return {"x": round(x, 6), "y": round(y, 6)}
 
 
+async def brainstorm_supply_chain(keyword: str) -> list[dict[str, Any]]:
+    api_key = os.getenv("GROQ_API_KEY")
+    if not api_key or Groq is None:
+        # Detailed simulation if no API key
+        kw = keyword.lower()
+        if "apple" in kw or "aapl" in kw:
+            return [
+                {"name": "Apple Park (HQ)", "lat": 37.3349, "lon": -122.0090, "type": "HQ", "riskScore": 0.12},
+                {"name": "Foxconn Zhengzhou", "lat": 34.7466, "lon": 113.6253, "type": "Factory", "riskScore": 0.58},
+                {"name": "Port of Long Beach", "lat": 33.7701, "lon": -118.1937, "type": "Logistics", "riskScore": 0.34},
+                {"name": "Cork Operations", "lat": 51.8985, "lon": -8.4756, "type": "Regional HQ", "riskScore": 0.15},
+            ]
+        return [
+            {"name": f"{keyword} Global HQ", "lat": 40.7128, "lon": -74.0060, "type": "HQ", "riskScore": 0.1},
+            {"name": f"{keyword} Manufacturing Unit", "lat": 22.3193, "lon": 114.1694, "type": "Factory", "riskScore": 0.45},
+            {"name": f"{keyword} Key Distribution Point", "lat": 52.3676, "lon": 4.9041, "type": "Logistics", "riskScore": 0.25}
+        ]
+
+    try:
+        client = Groq(api_key=api_key)
+        prompt = (
+            f"Identify 5 key supply chain nodes for '{keyword}'. "
+            "Return ONLY a JSON object with a 'nodes' key containing a list of objects. "
+            "Each object must have 'name', 'lat', 'lon', 'type', and 'riskScore' (0.0 to 1.0)."
+        )
+        resp = client.chat.completions.create(
+            messages=[{"role": "user", "content": prompt}],
+            model="llama3-8b-8192",
+            response_format={"type": "json_object"}
+        )
+        data = json.loads(resp.choices[0].message.content)
+        return data.get("nodes", [])
+    except Exception:
+        return [{"name": f"{keyword} Ops", "lat": 0, "lon": 0, "type": "Unknown", "riskScore": 0.5}]
+
+
 async def build_global_intelligence(keyword: str = "global markets") -> dict[str, Any]:
     cache_key = f"global-intel::{keyword.lower()}"
     cached = get_cached(cache_key, ttl_seconds=60 * 20)
@@ -628,6 +668,10 @@ async def build_global_intelligence(keyword: str = "global markets") -> dict[str
         return cached
 
     kw = keyword.lower()
+
+    # Query AI for supply chain nodes
+    ai_nodes = await brainstorm_supply_chain(keyword)
+
     companies = [
         {"ticker": "AAPL", "name": "Apple", "lat": 37.3349, "lon": -122.0090, "region": "North America"},
         {"ticker": "MSFT", "name": "Microsoft", "lat": 47.6426, "lon": -122.1396, "region": "North America"},
@@ -648,9 +692,15 @@ async def build_global_intelligence(keyword: str = "global markets") -> dict[str
     cmc = await fetch_coinmarketcap_signal(keyword)
 
     company_markers: list[dict[str, Any]] = []
-    for i, c in enumerate(companies):
-        ticker = c["ticker"]
+
+    # Combine static and AI nodes
+    combined_nodes = companies + ai_nodes
+
+    for i, c in enumerate(combined_nodes):
+        ticker = c.get("ticker")
         try:
+            if not ticker:
+                raise ValueError("No ticker")
             history = fetch_month_prices(ticker)
             articles = await fetch_news(ticker)
             forecast_payload = await build_forecast_payload(ticker, "transformer", history, articles, keyword)
@@ -661,7 +711,7 @@ async def build_global_intelligence(keyword: str = "global markets") -> dict[str
             sentiment = forecast_payload["combinedSentimentScore"]
             options_flow = forecast_payload["optionsFlow"]
         except Exception:
-            last = fetch_latest_quote(ticker)
+            last = fetch_latest_quote(ticker) if ticker else 150.0
             pred = round(last * 1.01, 2)
             direction = "up"
             confidence = 0.5
@@ -680,6 +730,7 @@ async def build_global_intelligence(keyword: str = "global markets") -> dict[str
                 "volatility": round(abs(pred - last) / max(last, 1), 4),
                 "sentiment": sentiment,
                 "optionsFlow": options_flow,
+                "riskScore": c.get("riskScore", 0.2)
             }
         )
 
@@ -740,6 +791,19 @@ async def build_global_intelligence(keyword: str = "global markets") -> dict[str
                 "dayOffset": 5,
             },
         ]
+
+    # Add transit routes between AI nodes
+    for i in range(len(ai_nodes) - 1):
+        n1 = ai_nodes[i]
+        n2 = ai_nodes[i+1]
+        shipping_routes.append({
+            "name": f"{n1['name']} -> {n2['name']}",
+            "from": {"lat": n1["lat"], "lon": n1["lon"], **project_coord(n1["lat"], n1["lon"])},
+            "to": {"lat": n2["lat"], "lon": n2["lon"], **project_coord(n2["lat"], n2["lon"])},
+            "type": "transit",
+            "disruptionScore": (n1.get("riskScore", 0) + n2.get("riskScore", 0)) / 2,
+            "dayOffset": (i + 1) * 2
+        })
 
     weather_nodes = [
         {"name": "North Atlantic Storm", "lat": 46.0, "lon": -35.0, **project_coord(46.0, -35.0), "severity": 0.78, "precipitationMm": 34, "dayOffset": 3},
