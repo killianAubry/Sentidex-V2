@@ -13,6 +13,8 @@ router = APIRouter()
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
 WEATHERAPI_KEY = os.getenv("WEATHERAPI_KEY", "")
 GNEWS_API_KEY = os.getenv("GNEWS_API_KEY", "")
+TAVILY_API_KEY = os.getenv("TAVILY_API_KEY", "")
+SERPAPI_API_KEY = os.getenv("SERPAPI_API_KEY", "")
 OPENBB_BASE = os.getenv("OPENBB_BASE", "http://127.0.0.1:6900/api/v1")
 
 def _get_groq_client() -> AsyncGroq:
@@ -198,7 +200,85 @@ def _keyword_score(text: str, keywords: list[str]) -> float:
     return min(1.0, hits / max(len(keywords), 1))
 
 
-async def get_trade_route_impacts(routes: list[dict], query: str, client: httpx.AsyncClient) -> list[dict]:
+async def search_web_events(query: str, client: httpx.AsyncClient, max_results: int = 5) -> list[str]:
+    """Search web events with provider priority: Tavily -> GNews -> SerpAPI."""
+    if TAVILY_API_KEY:
+        try:
+            resp = await client.post(
+                "https://api.tavily.com/search",
+                json={
+                    "api_key": TAVILY_API_KEY,
+                    "query": query,
+                    "search_depth": "advanced",
+                    "max_results": max_results,
+                },
+                timeout=8,
+            )
+            results = resp.json().get("results", [])
+            headlines = [r.get("title", "") for r in results if r.get("title")]
+            if headlines:
+                return headlines[:max_results]
+        except Exception as e:
+            logger.warning(f"Tavily search failed for query='{query}': {e}")
+
+    if GNEWS_API_KEY:
+        try:
+            resp = await client.get(
+                "https://gnews.io/api/v4/search",
+                params={"q": query, "lang": "en", "max": max_results, "apikey": GNEWS_API_KEY},
+                timeout=8,
+            )
+            articles = resp.json().get("articles", [])
+            headlines = [a.get("title", "") for a in articles if a.get("title")]
+            if headlines:
+                return headlines[:max_results]
+        except Exception as e:
+            logger.warning(f"GNews search failed for query='{query}': {e}")
+
+    if SERPAPI_API_KEY:
+        try:
+            resp = await client.get(
+                "https://serpapi.com/search.json",
+                params={"q": query, "engine": "google", "api_key": SERPAPI_API_KEY, "num": max_results},
+                timeout=8,
+            )
+            organic = resp.json().get("organic_results", [])
+            headlines = [r.get("title", "") for r in organic if r.get("title")]
+            if headlines:
+                return headlines[:max_results]
+        except Exception as e:
+            logger.warning(f"SerpAPI search failed for query='{query}': {e}")
+
+    return []
+
+
+def _extract_polymarket_probability(event: dict) -> float:
+    raw_prices = event.get("outcomePrices") or event.get("outcomes") or []
+    if isinstance(raw_prices, list) and raw_prices:
+        try:
+            parsed = [float(p) for p in raw_prices if p is not None]
+            if parsed:
+                return max(0.0, min(1.0, max(parsed)))
+        except Exception:
+            pass
+    prob = event.get("probability")
+    if prob is not None:
+        try:
+            return max(0.0, min(1.0, float(prob)))
+        except Exception:
+            pass
+    return 0.5
+
+
+def _apply_probability_weight(base_score: float, probabilities: list[float]) -> float:
+    if not probabilities:
+        return round(base_score, 2)
+    market_weight = sum(probabilities) / len(probabilities)
+    weighted = (base_score * 0.75) + (market_weight * 0.25)
+    return round(max(0.0, min(1.0, weighted)), 2)
+
+
+async def get_trade_route_impacts(routes: list[dict], query: str, client: httpx.AsyncClient, market_probabilities: list[float]) -> list[dict]:
     if not routes:
         return []
 
@@ -207,22 +287,11 @@ async def get_trade_route_impacts(routes: list[dict], query: str, client: httpx.
     route_impacts = []
     for route in top_routes:
         route_name = f"{route['from']['name']} ↔ {route['to']['name']}"
-        headline_pool = []
-        if GNEWS_API_KEY:
-            try:
-                resp = await client.get(
-                    "https://gnews.io/api/v4/search",
-                    params={
-                        "q": f"{route['from']['name']} {route['to']['name']} shipping route disruption OR canal OR port",
-                        "lang": "en",
-                        "max": 4,
-                        "apikey": GNEWS_API_KEY,
-                    },
-                    timeout=6,
-                )
-                headline_pool = [a.get("title", "") for a in resp.json().get("articles", [])]
-            except Exception:
-                headline_pool = []
+        headline_pool = await search_web_events(
+            f"{route['from']['name']} {route['to']['name']} shipping route disruption OR canal OR port",
+            client,
+            max_results=4,
+        )
 
         if not headline_pool:
             logger.warning(f"No headlines found for trade route: {route_name}")
@@ -233,10 +302,11 @@ async def get_trade_route_impacts(routes: list[dict], query: str, client: httpx.
 
         text_blob = " ".join(headline_pool)
         disruption_score = max(route.get("risk", 0), _keyword_score(text_blob, disruption_terms))
+        weighted_score = _apply_probability_weight(disruption_score, market_probabilities)
         route_impacts.append({
             "route": route_name,
-            "status": "impacted" if disruption_score >= 0.55 else "watch",
-            "impact_score": round(disruption_score, 2),
+            "status": "impacted" if weighted_score >= 0.55 else "watch",
+            "impact_score": weighted_score,
             "reason": "Price, weather, and shipping-risk signals synthesized from route risk + headlines.",
             "headlines": headline_pool[:3],
         })
@@ -244,58 +314,54 @@ async def get_trade_route_impacts(routes: list[dict], query: str, client: httpx.
     return route_impacts
 
 
-async def get_country_policy_impacts(nodes: list[dict], query: str, client: httpx.AsyncClient) -> list[dict]:
+async def get_country_policy_impacts(nodes: list[dict], query: str, client: httpx.AsyncClient, market_probabilities: list[float]) -> list[dict]:
     countries = sorted({n.get("country", "").strip() for n in nodes if n.get("country")})[:8]
     results = []
     policy_terms = ["policy", "tariff", "export", "sanction", "regulation", "subsidy", "trade law"]
     for country in countries:
-        headlines = []
-        if GNEWS_API_KEY:
-            try:
-                r = await client.get(
-                    "https://gnews.io/api/v4/search",
-                    params={
-                        "q": f"{country} trade policy supply chain {query}",
-                        "lang": "en",
-                        "max": 4,
-                        "apikey": GNEWS_API_KEY,
-                    },
-                    timeout=6,
-                )
-                headlines = [a.get("title", "") for a in r.json().get("articles", [])]
-            except Exception:
-                headlines = []
+        headlines = await search_web_events(
+            f"{country} trade policy supply chain {query} draft law regulation tariff",
+            client,
+            max_results=4,
+        )
 
         if not headlines:
             logger.warning(f"No headlines found for country policy: {country}")
             headlines = [f"No major confirmed policy shifts detected yet in {country} for {query}."]
 
-        policy_score = _keyword_score(" ".join(headlines), policy_terms)
+        policy_score = _apply_probability_weight(_keyword_score(" ".join(headlines), policy_terms), market_probabilities)
         results.append({
             "country": country,
             "status": "policy-change-risk" if policy_score >= 0.4 else "stable-watch",
-            "policy_score": round(policy_score, 2),
+            "policy_score": policy_score,
             "summary": f"Country policy agent scanned new and draft policy signals for {country}.",
             "headlines": headlines[:3],
         })
     return results
 
 
-def get_location_impacts(nodes: list[dict]) -> list[dict]:
+async def get_location_impacts(nodes: list[dict], query: str, client: httpx.AsyncClient, market_probabilities: list[float]) -> list[dict]:
     location_signals = []
     for node in nodes[:12]:
         risk = node.get("risk", {})
         weather = node.get("weather", {})
+        headlines = await search_web_events(
+            f"{node.get('city', '')} {node.get('country', '')} weather organized crime disruption supply chain {query}",
+            client,
+            max_results=3,
+        )
         category = "weather" if weather.get("wind_kph") and weather.get("wind_kph") > 40 else "news"
         if risk.get("score", 0) > 0.68:
             category = "security"
+        base_score = max(risk.get("score", 0), _keyword_score(" ".join(headlines), ["storm", "flood", "crime", "strike", "attack", "disruption"]))
+        impact_score = _apply_probability_weight(base_score, market_probabilities)
         location_signals.append({
             "location": f"{node.get('city', 'Unknown')}, {node.get('country', 'Unknown')}",
             "node": node.get("name", "Unknown"),
             "event_category": category,
-            "impact_score": round(max(risk.get("score", 0), 0.2), 2),
+            "impact_score": impact_score,
             "summary": risk.get("summary", "Location signal detected."),
-            "headlines": (risk.get("headlines") or [])[:2],
+            "headlines": (headlines or risk.get("headlines") or [])[:2],
         })
     return sorted(location_signals, key=lambda x: x["impact_score"], reverse=True)
 
@@ -313,9 +379,10 @@ async def get_polymarket_signals(query: str, countries: list[str], client: httpx
         for evt in events[:5]:
             title = evt.get("title") or evt.get("question") or "Polymarket event"
             slug = evt.get("slug", "")
+            probability = _extract_polymarket_probability(evt)
             signals.append({
                 "market": title,
-                "probability": round(float(evt.get("volume24hr", 0) or 0) / 1_000_000, 2),
+                "probability": round(probability, 2),
                 "liquidity": evt.get("liquidity", 0),
                 "status": "implicated" if any(c.lower() in title.lower() for c in countries[:3]) else "related",
                 "url": f"https://polymarket.com/event/{slug}" if slug else "https://polymarket.com",
@@ -440,13 +507,14 @@ async def globe_supply_chain(query: str = "Apple", node_count: int = 12):
                     })
 
         country_list = sorted({n.get("country", "") for n in enriched if n.get("country")})
-        trade_route_system, country_system, polymarket_signals = await asyncio.gather(
-            get_trade_route_impacts(routes, query, client),
-            get_country_policy_impacts(enriched, query, client),
-            get_polymarket_signals(query, country_list, client),
-        )
+        polymarket_signals = await get_polymarket_signals(query, country_list, client)
+        market_probabilities = [m.get("probability", 0.5) for m in polymarket_signals if isinstance(m.get("probability"), (float, int))]
 
-        location_system = get_location_impacts(enriched)
+        trade_route_system, country_system, location_system = await asyncio.gather(
+            get_trade_route_impacts(routes, query, client, market_probabilities),
+            get_country_policy_impacts(enriched, query, client, market_probabilities),
+            get_location_impacts(enriched, query, client, market_probabilities),
+        )
         dependency_graph = build_dependency_graph(query, enriched)
 
         return {
@@ -458,6 +526,11 @@ async def globe_supply_chain(query: str = "Apple", node_count: int = 12):
                 "trade_route": trade_route_system,
                 "country": country_system,
                 "location": location_system,
+            },
+            "pipeline": {
+                "event_detection_layer": "Trade route, country-policy, and location events searched via Tavily/GNews/SerpAPI.",
+                "entity_linking_layer": "Events linked to routes, countries, and mapped supply-chain nodes.",
+                "impact_modeling_layer": "Base AI risk scores weighted with Polymarket probabilities for calibration.",
             },
             "polymarket": polymarket_signals,
             "dependency_graph": dependency_graph,
