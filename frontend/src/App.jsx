@@ -4,22 +4,41 @@ import * as d3geo from 'd3-geo'
 import * as topojson from 'topojson-client'
 import Highcharts from 'highcharts'
 import HighchartsReact from 'highcharts-react-official'
-import HighchartsMore from 'highcharts/highcharts-more'
+import {
+  Building01,
+  Settings01,
+  Anchor,
+  Package,
+  Tool01,
+  Truck01,
+  LayersTwo01,
+  Sun,
+  MarkerPin01,
+  CloudRaining01,
+  Snowflake01,
+  Lightning01,
+  Cloud01,
+  Globe01,
+  AlertTriangle,
+  BarChart01,
+  SearchLg,
+  RefreshCw01,
+  XClose,
+  ChevronDown,
+  Wind01,
+  Thermometer01,
+} from '@untitled-ui/icons-react'
 
-// Fix: call the default export correctly
 if (typeof Highcharts === 'object') {
-  // eslint-disable-next-line no-undef
   import('highcharts/highcharts-more').then(m => {
     const fn = m.default || m
     if (typeof fn === 'function') fn(Highcharts)
   })
 }
 
-
 const STORAGE_KEY = 'sentidex-portfolio-v3'
 const defaultPortfolio = [{ ticker: 'AAPL', shares: 4 }, { ticker: 'MSFT', shares: 2 }, { ticker: 'NVDA', shares: 1 }]
 
-// --- Helper Functions ---
 function toSeries(history = [], forecast = [], key = 'close') {
   return [
     ...history.map((r) => ({ date: new Date(r.date), value: r[key], type: 'history' })),
@@ -49,77 +68,38 @@ function aggregateForecastFromSources(positions = [], selectedSources = []) {
   return Object.entries(byDate).sort((a, b) => a[0].localeCompare(b[0])).map(([date, value]) => ({ date, value: Number(value.toFixed(2)) }))
 }
 
-// --- Components ---
-
 function StockChart({ title, history, forecast, valueKey = 'value', separateLines = [], showConfidence = false }) {
   const options = useMemo(() => {
     const histData = history.map(d => [new Date(d.date).getTime(), d[valueKey] || d.close])
     const foreData = forecast.map(d => [new Date(d.date).getTime(), d.predictedClose || d.value])
-
-    // Create area range data (forecast +/- 5% for demo)
     const rangeData = forecast.map(d => {
       const val = d.predictedClose || d.value
       return [new Date(d.date).getTime(), val * 0.95, val * 1.05]
     })
-
     const series = [
-      {
-        name: 'History',
-        data: histData,
-        color: '#3b82f6',
-        zIndex: 2
-      },
-      {
-        name: 'Aggregate Forecast',
-        data: foreData,
-        color: '#60a5fa',
-        dashStyle: 'ShortDash',
-        zIndex: 3
-      }
+      { name: 'History', data: histData, color: '#3b82f6', zIndex: 2 },
+      { name: 'Aggregate Forecast', data: foreData, color: '#60a5fa', dashStyle: 'ShortDash', zIndex: 3 }
     ]
-
     if (showConfidence) {
       series.push({
-        name: 'Confidence Range',
-        data: rangeData,
-        type: 'arearange',
-        lineWidth: 0,
-        linkedTo: ':previous',
-        color: '#3b82f6',
-        fillOpacity: 0.1,
-        zIndex: 1,
-        marker: { enabled: false }
+        name: 'Confidence Range', data: rangeData, type: 'arearange',
+        lineWidth: 0, linkedTo: ':previous', color: '#3b82f6',
+        fillOpacity: 0.1, zIndex: 1, marker: { enabled: false }
       })
     }
-
     separateLines.forEach((line, i) => {
       series.push({
         name: `Source: ${line.name}`,
         data: line.data.map(d => [new Date(d.date).getTime(), d.value]),
         color: Highcharts.getOptions().colors[i + 2],
-        dashStyle: 'Dot',
-        zIndex: 2,
-        opacity: 0.7
+        dashStyle: 'Dot', zIndex: 2, opacity: 0.7
       })
     })
-
     return {
-      chart: {
-        backgroundColor: '#1e293b',
-        style: { fontFamily: 'Inter, sans-serif' },
-        height: 400
-      },
+      chart: { backgroundColor: '#1e293b', style: { fontFamily: 'Inter, sans-serif' }, height: 400 },
       title: { text: null },
-      xAxis: {
-        type: 'datetime',
-        gridLineColor: '#334155',
-        labels: { style: { color: '#94a3b8' } }
-      },
-      yAxis: {
-        title: { text: null },
-        gridLineColor: '#334155',
-        labels: { style: { color: '#94a3b8' } }
-      },
+      xAxis: { type: 'datetime', gridLineColor: '#334155', labels: { style: { color: '#94a3b8' } } },
+      yAxis: { title: { text: null }, gridLineColor: '#334155', labels: { style: { color: '#94a3b8' } } },
       legend: { itemStyle: { color: '#94a3b8' } },
       tooltip: { shared: true },
       series
@@ -127,12 +107,7 @@ function StockChart({ title, history, forecast, valueKey = 'value', separateLine
   }, [history, forecast, valueKey, separateLines, showConfidence])
 
   if (!history.length && !forecast.length) return <div className="no-data">No chart data available.</div>
-
-  return (
-    <div className="chart-container">
-      <HighchartsReact highcharts={Highcharts} options={options} />
-    </div>
-  )
+  return <div className="chart-container"><HighchartsReact highcharts={Highcharts} options={options} /></div>
 }
 
 const RiskMeter = ({ score }) => {
@@ -147,26 +122,66 @@ const RiskMeter = ({ score }) => {
   )
 }
 
+// Untitled UI icon components per node type (sidebar/panels only — NOT used on globe)
+const NODE_ICON_COMPONENTS = {
+  headquarters: Building01,
+  manufacturing: Settings01,
+  port: Anchor,
+  warehouse: Package,
+  supplier: Tool01,
+  distribution: Truck01,
+  mine: LayersTwo01,
+  farm: Sun,
+  default: MarkerPin01,
+}
+
+const WEATHER_ICON_COMPONENTS = {
+  '☀️': Sun,
+  '🌧️': CloudRaining01,
+  '❄️': Snowflake01,
+  '🌩️': Lightning01,
+  '⛅': Cloud01,
+  '🌫️': Wind01,
+  '🌐': Globe01,
+}
+
+function NodeIcon({ type, size = 16, color = 'currentColor', ...props }) {
+  const Icon = NODE_ICON_COMPONENTS[type] || NODE_ICON_COMPONENTS.default
+  return <Icon width={size} height={size} color={color} {...props} />
+}
+
+function WeatherIcon({ icon, size = 14, color = '#60a5fa', ...props }) {
+  const Icon = WEATHER_ICON_COMPONENTS[icon] || Globe01
+  return <Icon width={size} height={size} color={color} {...props} />
+}
+
+const RISK_COLORS = {
+  low: '#22c55e',
+  medium: '#f59e0b',
+  high: '#ef4444',
+  critical: '#7c3aed',
+}
+
+// Simple dot shapes for globe nodes — no icons, no paths, always crisp
+function GlobeDot({ riskColor, isSelected }) {
+  return (
+    <g>
+      <circle r="10" fill="#0f172a" stroke={riskColor} strokeWidth="2" />
+      <circle r="4" fill={riskColor} />
+      {isSelected && <circle r="14" fill="none" stroke={riskColor} strokeWidth="1" opacity="0.5" />}
+    </g>
+  )
+}
+
 function PortfolioDashboard({
-  portfolio,
-  portfolioData,
-  refresh,
-  loading,
-  lookup,
-  setLookup,
-  addTicker,
-  selectedSources,
-  toggleSource,
-  sourceOptions,
-  forecastBySelectedSources,
-  viewStates,
-  toggleViewState
+  portfolio, portfolioData, refresh, loading, lookup, setLookup,
+  addTicker, selectedSources, toggleSource, sourceOptions,
+  forecastBySelectedSources, viewStates, toggleViewState
 }) {
   const sortedPositions = useMemo(() => {
     return [...(portfolioData?.positions || [])].sort((a, b) => b.forecastDeltaPct - a.forecastDeltaPct)
   }, [portfolioData])
 
-  // Mock separate forecasts for visualization if enabled
   const separateLines = useMemo(() => {
     if (!viewStates.separateForecasts) return []
     return selectedSources.map(source => ({
@@ -180,18 +195,13 @@ function PortfolioDashboard({
       <div className="dashboard-main">
         <div className="dashboard-header">
           <div className="ticker-lookup">
-            <input
-              value={lookup}
-              onChange={(e) => setLookup(e.target.value.toUpperCase())}
-              placeholder="Enter Ticker (e.g. AAPL)"
-            />
+            <input value={lookup} onChange={(e) => setLookup(e.target.value.toUpperCase())} placeholder="Enter Ticker (e.g. AAPL)" />
             <button onClick={addTicker}>Add to Portfolio</button>
             <button className="refresh-btn" onClick={refresh} disabled={loading}>
               {loading ? 'Updating...' : 'Refresh Forecasts'}
             </button>
           </div>
         </div>
-
         <div className="dashboard-content">
           <div className="center-screen">
             <div className="chart-card card">
@@ -208,7 +218,6 @@ function PortfolioDashboard({
                 showConfidence={viewStates.showConfidence}
               />
             </div>
-
             <div className="command-center card">
               <h4>Command Center</h4>
               <div className="controls-grid">
@@ -217,11 +226,7 @@ function PortfolioDashboard({
                   <div className="source-toggles">
                     {sourceOptions.map((source) => (
                       <label key={source} className="toggle-label">
-                        <input
-                          type="checkbox"
-                          checked={selectedSources.includes(source)}
-                          onChange={() => toggleSource(source)}
-                        />
+                        <input type="checkbox" checked={selectedSources.includes(source)} onChange={() => toggleSource(source)} />
                         {source}
                       </label>
                     ))}
@@ -230,30 +235,14 @@ function PortfolioDashboard({
                 <div className="control-group">
                   <h5>Views & Analysis</h5>
                   <div className="view-buttons">
-                    <button
-                      className={`small-btn ${viewStates.showConfidence ? 'active' : ''}`}
-                      onClick={() => toggleViewState('showConfidence')}
-                    >
-                      Show Confidence Levels
-                    </button>
-                    <button
-                      className={`small-btn ${viewStates.separateForecasts ? 'active' : ''}`}
-                      onClick={() => toggleViewState('separateForecasts')}
-                    >
-                      Separate Forecasts
-                    </button>
-                    <button
-                      className={`small-btn ${viewStates.macroImpact ? 'active' : ''}`}
-                      onClick={() => toggleViewState('macroImpact')}
-                    >
-                      Macro Impact
-                    </button>
+                    <button className={`small-btn ${viewStates.showConfidence ? 'active' : ''}`} onClick={() => toggleViewState('showConfidence')}>Show Confidence Levels</button>
+                    <button className={`small-btn ${viewStates.separateForecasts ? 'active' : ''}`} onClick={() => toggleViewState('separateForecasts')}>Separate Forecasts</button>
+                    <button className={`small-btn ${viewStates.macroImpact ? 'active' : ''}`} onClick={() => toggleViewState('macroImpact')}>Macro Impact</button>
                   </div>
                 </div>
               </div>
             </div>
           </div>
-
           <aside className="portfolio-sidebar card">
             <h3>Current Holdings</h3>
             <div className="holdings-list">
@@ -280,25 +269,6 @@ function PortfolioDashboard({
   )
 }
 
-const NODE_ICONS = {
-  headquarters: '🏢',
-  manufacturing: '🏭',
-  port: '⚓',
-  warehouse: '📦',
-  supplier: '🔩',
-  distribution: '🚚',
-  mine: '⛏️',
-  farm: '🌾',
-  default: '📍',
-}
-
-const RISK_COLORS = {
-  low: '#22c55e',
-  medium: '#f59e0b',
-  high: '#ef4444',
-  critical: '#7c3aed',
-}
-
 function GlobalMarketIntelligence({ keyword, setKeyword }) {
   const [data, setData] = useState(null)
   const [loading, setLoading] = useState(false)
@@ -309,27 +279,22 @@ function GlobalMarketIntelligence({ keyword, setKeyword }) {
   const [scale, setScale] = useState(250)
   const [land, setLand] = useState(null)
   const [inputVal, setInputVal] = useState(keyword)
+  const [nodeCount, setNodeCount] = useState(12)  // user-configurable node count
 
-  // Load world topology
   useEffect(() => {
     fetch('https://cdn.jsdelivr.net/npm/world-atlas@2/land-110m.json')
       .then(r => r.json())
       .then(world => setLand(topojson.feature(world, world.objects.land)))
   }, [])
 
-  // Drag + zoom on globe
   useEffect(() => {
     const svg = d3.select(svgRef.current)
-    svg.call(
-      d3.drag().on('drag', (e) =>
-        setRotation(([r0, r1]) => [r0 + e.dx / 2, r1 - e.dy / 2])
-      )
-    )
-    svg.call(
-      d3.zoom().scaleExtent([0.5, 4]).on('zoom', (e) =>
-        setScale(250 * e.transform.k)
-      )
-    )
+    svg.call(d3.drag().on('drag', (e) =>
+      setRotation(([r0, r1]) => [r0 + e.dx / 2, r1 - e.dy / 2])
+    ))
+    svg.call(d3.zoom().scaleExtent([0.3, 20]).on('zoom', (e) =>
+      setScale(250 * e.transform.k)
+    ))
   }, [])
 
   async function runSearch(q) {
@@ -337,14 +302,11 @@ function GlobalMarketIntelligence({ keyword, setKeyword }) {
     setSelected(null)
     setData(null)
     try {
-      const r = await fetch(`/api/globe-supply-chain?query=${encodeURIComponent(q)}`)
+      const r = await fetch(`/api/globe-supply-chain?query=${encodeURIComponent(q)}&node_count=${nodeCount}`)
       const j = await r.json()
       setData(j)
       setKeyword(q)
-      // Auto-rotate to first node
-      if (j.nodes?.length) {
-        setRotation([-j.nodes[0].lon, -j.nodes[0].lat + 20])
-      }
+      if (j.nodes?.length) setRotation([-j.nodes[0].lon, -j.nodes[0].lat + 20])
     } catch (e) {
       console.error(e)
     } finally {
@@ -391,8 +353,24 @@ function GlobalMarketIntelligence({ keyword, setKeyword }) {
             placeholder="Enter company, commodity or sector... (Press Enter)"
             style={{ flex: 1 }}
           />
-          <button onClick={() => runSearch(inputVal)} disabled={loading} className="refresh-btn">
-            {loading ? '🔄 Analyzing...' : '🔍 Analyze Supply Chain'}
+          {/* Node count control */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', color: '#94a3b8', fontSize: '0.8rem', whiteSpace: 'nowrap' }}>
+            Nodes:
+            <input
+              type="number"
+              min={3}
+              max={20}
+              value={nodeCount}
+              onChange={e => setNodeCount(Math.min(20, Math.max(3, parseInt(e.target.value) || 12)))}
+              style={{ width: '3.5rem', padding: '0.3rem', background: '#1e293b', border: '1px solid #334155', borderRadius: '0.4rem', color: 'white', textAlign: 'center' }}
+            />
+          </div>
+          <button onClick={() => runSearch(inputVal)} disabled={loading} className="refresh-btn"
+            style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+            {loading
+              ? <><RefreshCw01 width={14} height={14} /> Analyzing...</>
+              : <><SearchLg width={14} height={14} /> Analyze Supply Chain</>
+            }
           </button>
         </div>
 
@@ -416,28 +394,21 @@ function GlobalMarketIntelligence({ keyword, setKeyword }) {
               alignItems: 'center', justifyContent: 'center', background: 'rgba(15,23,42,0.85)',
               zIndex: 10, borderRadius: '1rem', gap: '1rem'
             }}>
-              <div style={{ fontSize: '2rem' }}>🌐</div>
+              <Globe01 width={48} height={48} color="#60a5fa" />
               <div style={{ color: '#60a5fa', fontSize: '1rem' }}>AI is mapping the supply chain...</div>
-              <div style={{ color: '#94a3b8', fontSize: '0.8rem' }}>Querying Groq → Geocoding → Risk Analysis</div>
+              <div style={{ color: '#94a3b8', fontSize: '0.8rem' }}>Querying Groq → Geocoding {nodeCount} nodes → Risk Analysis</div>
             </div>
           )}
 
           <svg ref={svgRef} viewBox={`0 0 ${width} ${height}`} className="globe-3d">
-            <defs>
-              <radialGradient id="globe-grad" cx="45%" cy="35%" r="55%">
-                <stop offset="0%" stopColor="#1e3a5f" />
-                <stop offset="100%" stopColor="#0a0f1e" />
-              </radialGradient>
-            </defs>
+            {/* Flat dark ocean — no gradient, no shading */}
+            <circle cx={width / 2} cy={height / 2} r={scale} fill="#0a0f1e" />
 
-            {/* Ocean */}
-            <circle cx={width / 2} cy={height / 2} r={scale} fill="url(#globe-grad)" />
+            {/* Graticule — subtle grid lines */}
+            <path d={path(d3geo.geoGraticule()())} fill="none" stroke="#1e293b" strokeWidth="0.4" opacity="0.6" />
 
-            {/* Graticule */}
-            <path d={path(d3geo.geoGraticule()())} fill="none" stroke="#1e3a5f" strokeWidth="0.5" opacity="0.8" />
-
-            {/* Land */}
-            {land && <path d={path(land)} fill="#1e293b" stroke="#334155" strokeWidth="0.8" />}
+            {/* Land — white outline only, flat fill */}
+            {land && <path d={path(land)} fill="#111827" stroke="rgba(255,255,255,0.35)" strokeWidth="0.6" />}
 
             {/* Routes */}
             {layers.routes && data?.routes?.map((r, i) => {
@@ -447,38 +418,31 @@ function GlobalMarketIntelligence({ keyword, setKeyword }) {
               return (
                 <path key={`route-${i}`} d={d} fill="none"
                   stroke={color} strokeWidth="1.5"
-                  strokeDasharray="5 4" opacity="0.75"
+                  strokeDasharray="5 4" opacity="0.8"
                 />
               )
             })}
 
-            {/* Nodes */}
+            {/* Nodes — simple dots only, no icons */}
             {layers.nodes && data?.nodes?.map((node, i) => {
               if (!isVisible(node.lon, node.lat)) return null
               const coords = projection([node.lon, node.lat])
               if (!coords) return null
               const riskColor = RISK_COLORS[node.risk?.level] || '#94a3b8'
-              const icon = NODE_ICONS[node.type] || NODE_ICONS.default
 
               return (
-                <g key={`node-${i}`} transform={`translate(${coords[0]},${coords[1]})`}
-                  onClick={() => setSelected(node)} className="node-marker" style={{ cursor: 'pointer' }}>
+                <g key={`node-${i}`}
+                  transform={`translate(${coords[0]},${coords[1]})`}
+                  onClick={() => setSelected(node)}
+                  style={{ cursor: 'pointer' }}>
 
-                  {/* Risk pulse ring */}
+                  {/* Outer risk ring */}
                   {layers.risk && (
-                    <circle r="18" fill="none" stroke={riskColor} strokeWidth="1.5" opacity="0.4" />
+                    <circle r="16" fill="none" stroke={riskColor} strokeWidth="1" opacity="0.3" />
                   )}
 
-                  {/* Node background */}
-                  <circle r="12" fill="#0f172a" stroke={riskColor} strokeWidth="2" />
-
-                  {/* Icon */}
-                  <text textAnchor="middle" dominantBaseline="central" fontSize="12">{icon}</text>
-
-                  {/* Weather icon */}
-                  {layers.weather && node.weather?.icon && (
-                    <text x="14" y="-14" fontSize="11" textAnchor="middle">{node.weather.icon}</text>
-                  )}
+                  {/* Main dot */}
+                  <GlobeDot riskColor={riskColor} isSelected={selected?.name === node.name} />
 
                   {/* Risk score badge */}
                   {layers.risk && node.risk?.score > 0.4 && (
@@ -490,8 +454,8 @@ function GlobalMarketIntelligence({ keyword, setKeyword }) {
                     </g>
                   )}
 
-                  {/* Name label */}
-                  <text y="24" textAnchor="middle" fontSize="9" fill="#94a3b8" style={{ pointerEvents: 'none' }}>
+                  {/* City label */}
+                  <text y="22" textAnchor="middle" fontSize="8" fill="#94a3b8" style={{ pointerEvents: 'none' }}>
                     {node.city || node.name}
                   </text>
                 </g>
@@ -499,11 +463,8 @@ function GlobalMarketIntelligence({ keyword, setKeyword }) {
             })}
           </svg>
 
-          {/* Layer toggles overlay */}
-          <div style={{
-            position: 'absolute', bottom: '1rem', left: '1rem',
-            display: 'flex', gap: '0.5rem', flexWrap: 'wrap'
-          }}>
+          {/* Layer toggles */}
+          <div style={{ position: 'absolute', bottom: '1rem', left: '1rem', display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
             {Object.keys(layers).map(k => (
               <button key={k}
                 onClick={() => setLayers(p => ({ ...p, [k]: !p[k] }))}
@@ -520,64 +481,56 @@ function GlobalMarketIntelligence({ keyword, setKeyword }) {
 
         {/* Sidebar */}
         <aside className="gmi-sidebar">
-          {/* Node detail panel */}
           {selected && (
             <div className="detail-panel card" style={{ marginBottom: '1rem' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                 <div>
-                  <h4 style={{ margin: 0 }}>
-                    {NODE_ICONS[selected.type] || '📍'} {selected.name}
+                  <h4 style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                    <NodeIcon type={selected.type} size={18} color={RISK_COLORS[selected.risk?.level] || '#60a5fa'} />
+                    {selected.name}
                   </h4>
                   <div style={{ color: '#60a5fa', fontSize: '0.8rem' }}>{selected.type} · {selected.city}, {selected.country}</div>
                 </div>
-                <button className="close-btn" onClick={() => setSelected(null)}>✕</button>
+                <button className="close-btn" onClick={() => setSelected(null)}><XClose width={14} height={14} /></button>
               </div>
 
               <p style={{ color: '#94a3b8', fontSize: '0.85rem', margin: '0.5rem 0' }}>{selected.role}</p>
 
-              {/* Risk */}
               <div style={{ marginBottom: '0.75rem' }}>
-                <div style={{ color: RISK_COLORS[selected.risk?.level], fontWeight: 'bold', fontSize: '0.85rem', marginBottom: '0.25rem' }}>
+                <div style={{ color: RISK_COLORS[selected.risk?.level], fontWeight: 'bold', fontSize: '0.85rem', marginBottom: '0.25rem', display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
+                  <AlertTriangle width={14} height={14} />
                   Risk: {selected.risk?.level?.toUpperCase()} ({Math.round((selected.risk?.score || 0) * 100)}%)
                 </div>
                 <RiskMeter score={selected.risk?.score || 0} />
                 <p style={{ color: '#94a3b8', fontSize: '0.8rem', marginTop: '0.4rem' }}>{selected.risk?.summary}</p>
               </div>
 
-              {/* Weather */}
               {selected.weather && (
                 <div style={{ background: '#0f172a', borderRadius: '0.5rem', padding: '0.5rem', marginBottom: '0.75rem' }}>
-                  <div style={{ color: '#94a3b8', fontSize: '0.8rem' }}>
-                    {selected.weather.icon} {selected.weather.condition}
-                    {selected.weather.temp_c != null && ` · ${selected.weather.temp_c}°C`}
-                    {selected.weather.wind_kph != null && ` · 💨 ${selected.weather.wind_kph} km/h`}
+                  <div style={{ color: '#94a3b8', fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '0.4rem', flexWrap: 'wrap' }}>
+                    <WeatherIcon icon={selected.weather.icon} size={14} />
+                    {selected.weather.condition}
+                    {selected.weather.temp_c != null && <span style={{ display: 'flex', alignItems: 'center', gap: '0.2rem' }}>· <Thermometer01 width={12} height={12} /> {selected.weather.temp_c}°C</span>}
+                    {selected.weather.wind_kph != null && <span style={{ display: 'flex', alignItems: 'center', gap: '0.2rem' }}>· <Wind01 width={12} height={12} /> {selected.weather.wind_kph} km/h</span>}
                   </div>
                 </div>
               )}
 
-              {/* Headlines */}
               {selected.risk?.headlines?.length > 0 && (
                 <div>
                   <div style={{ color: '#64748b', fontSize: '0.75rem', marginBottom: '0.4rem' }}>RECENT NEWS</div>
                   {selected.risk.headlines.slice(0, 3).map((h, i) => (
-                    <div key={i} style={{
-                      fontSize: '0.75rem', color: '#94a3b8', padding: '0.3rem 0',
-                      borderBottom: '1px solid #1e293b'
-                    }}>• {h}</div>
+                    <div key={i} style={{ fontSize: '0.75rem', color: '#94a3b8', padding: '0.3rem 0', borderBottom: '1px solid #1e293b' }}>• {h}</div>
                   ))}
                 </div>
               )}
 
-              {/* Connections */}
               {selected.connections?.length > 0 && (
                 <div style={{ marginTop: '0.75rem' }}>
                   <div style={{ color: '#64748b', fontSize: '0.75rem', marginBottom: '0.3rem' }}>CONNECTS TO</div>
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.3rem' }}>
                     {selected.connections.map(c => (
-                      <span key={c} style={{
-                        fontSize: '0.7rem', padding: '0.15rem 0.4rem',
-                        background: '#1e293b', borderRadius: '999px', color: '#60a5fa'
-                      }}>{c}</span>
+                      <span key={c} style={{ fontSize: '0.7rem', padding: '0.15rem 0.4rem', background: '#1e293b', borderRadius: '999px', color: '#60a5fa' }}>{c}</span>
                     ))}
                   </div>
                 </div>
@@ -585,7 +538,6 @@ function GlobalMarketIntelligence({ keyword, setKeyword }) {
             </div>
           )}
 
-          {/* Node list */}
           {data?.nodes && (
             <div className="card" style={{ padding: '1rem' }}>
               <h4 style={{ margin: '0 0 0.75rem' }}>Supply Chain Nodes ({data.nodes.length})</h4>
@@ -594,24 +546,21 @@ function GlobalMarketIntelligence({ keyword, setKeyword }) {
                   .sort((a, b) => (b.risk?.score || 0) - (a.risk?.score || 0))
                   .map((node, i) => (
                     <div key={i}
-                      onClick={() => {
-                        setSelected(node)
-                        setRotation([-node.lon, -node.lat + 20])
-                      }}
+                      onClick={() => { setSelected(node); setRotation([-node.lon, -node.lat + 20]) }}
                       style={{
                         display: 'flex', justifyContent: 'space-between', alignItems: 'center',
                         padding: '0.4rem 0.6rem', background: '#0f172a', borderRadius: '0.4rem',
                         cursor: 'pointer', border: `1px solid ${RISK_COLORS[node.risk?.level] || '#334155'}22`
                       }}>
-                      <div>
-                        <span style={{ marginRight: '0.4rem' }}>{NODE_ICONS[node.type] || '📍'}</span>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                        <NodeIcon type={node.type} size={14} color={RISK_COLORS[node.risk?.level] || '#94a3b8'} />
                         <span style={{ fontSize: '0.8rem', color: '#e2e8f0' }}>{node.name}</span>
-                        <span style={{ fontSize: '0.7rem', color: '#64748b', marginLeft: '0.4rem' }}>{node.city}</span>
+                        <span style={{ fontSize: '0.7rem', color: '#64748b' }}>{node.city}</span>
                       </div>
                       <span style={{
                         fontSize: '0.7rem', padding: '0.1rem 0.4rem', borderRadius: '999px',
-                        background: RISK_COLORS[node.risk?.level] + '33',
-                        color: RISK_COLORS[node.risk?.level]
+                        background: (RISK_COLORS[node.risk?.level] || '#94a3b8') + '33',
+                        color: RISK_COLORS[node.risk?.level] || '#94a3b8'
                       }}>{node.risk?.level}</span>
                     </div>
                   ))}
@@ -621,7 +570,9 @@ function GlobalMarketIntelligence({ keyword, setKeyword }) {
 
           {!data && !loading && (
             <div className="card" style={{ padding: '2rem', textAlign: 'center', color: '#64748b' }}>
-              <div style={{ fontSize: '3rem', marginBottom: '1rem' }}>🌐</div>
+              <div style={{ display: 'flex', justifyContent: 'center', marginBottom: '1rem' }}>
+                <Globe01 width={48} height={48} color="#334155" />
+              </div>
               <div>Enter a company or commodity above and press Enter to map its global supply chain using AI.</div>
             </div>
           )}
@@ -639,29 +590,16 @@ export function App() {
   const [keyword, setKeyword] = useState('interest rates')
   const [selectedSources, setSelectedSources] = useState(['CombinedSentiment'])
   const [loading, setLoading] = useState(false)
-  const [viewStates, setViewStates] = useState({
-    showConfidence: false,
-    separateForecasts: false,
-    macroImpact: false
-  })
+  const [viewStates, setViewStates] = useState({ showConfidence: false, separateForecasts: false, macroImpact: false })
 
-  function toggleViewState(key) {
-    setViewStates(prev => ({ ...prev, [key]: !prev[key] }))
-  }
+  function toggleViewState(key) { setViewStates(prev => ({ ...prev, [key]: !prev[key] })) }
 
   useEffect(() => {
     const raw = localStorage.getItem(STORAGE_KEY)
-    if (raw) {
-      try {
-        const parsed = JSON.parse(raw)
-        if (Array.isArray(parsed) && parsed.length) setPortfolio(parsed)
-      } catch { }
-    }
+    if (raw) { try { const p = JSON.parse(raw); if (Array.isArray(p) && p.length) setPortfolio(p) } catch { } }
   }, [])
 
-  useEffect(() => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(portfolio))
-  }, [portfolio])
+  useEffect(() => { localStorage.setItem(STORAGE_KEY, JSON.stringify(portfolio)) }, [portfolio])
 
   async function refresh() {
     setLoading(true)
@@ -671,37 +609,30 @@ export function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ positions: portfolio, sentiment_model: 'transformer', keyword })
       })
-      const json = await res.json()
-      setPortfolioData(json)
-    } finally {
-      setLoading(false)
-    }
+      setPortfolioData(await res.json())
+    } finally { setLoading(false) }
   }
 
-  useEffect(() => {
-    if (portfolio.length) refresh()
-  }, [portfolio])
+  useEffect(() => { if (portfolio.length) refresh() }, [portfolio])
 
   const sourceOptions = useMemo(() => {
     const found = new Set()
-    for (const p of portfolioData?.positions || []) {
-      Object.keys(p.sourceForecasts || {}).forEach((k) => found.add(k))
-    }
+    for (const p of portfolioData?.positions || []) Object.keys(p.sourceForecasts || {}).forEach(k => found.add(k))
     return Array.from(found).sort()
   }, [portfolioData])
 
   const forecastBySelectedSources = useMemo(() =>
     aggregateForecastFromSources(portfolioData?.positions || [], selectedSources),
-  [portfolioData, selectedSources])
+    [portfolioData, selectedSources])
 
   function toggleSource(source) {
-    setSelectedSources((p) => (p.includes(source) ? p.filter((x) => x !== source) : [...p, source]))
+    setSelectedSources(p => p.includes(source) ? p.filter(x => x !== source) : [...p, source])
   }
 
   function addTicker() {
     const ticker = lookup.trim().toUpperCase()
-    if (!ticker || portfolio.some((p) => p.ticker === ticker)) return
-    setPortfolio((p) => [...p, { ticker, shares: 1 }])
+    if (!ticker || portfolio.some(p => p.ticker === ticker)) return
+    setPortfolio(p => [...p, { ticker, shares: 1 }])
   }
 
   return (
@@ -709,43 +640,20 @@ export function App() {
       <nav className="navbar">
         <div className="nav-brand">SENTIDEX <span className="pro-tag">PRO</span></div>
         <div className="nav-links">
-          <button
-            className={page === 'portfolio' ? 'active' : ''}
-            onClick={() => setPage('portfolio')}
-          >
-            Portfolio
-          </button>
-          <button
-            className={page === 'gmi' ? 'active' : ''}
-            onClick={() => setPage('gmi')}
-          >
-            GMI
-          </button>
+          <button className={page === 'portfolio' ? 'active' : ''} onClick={() => setPage('portfolio')}>Portfolio</button>
+          <button className={page === 'gmi' ? 'active' : ''} onClick={() => setPage('gmi')}>GMI</button>
         </div>
       </nav>
-
       <main className="main-content">
         {page === 'portfolio' ? (
           <PortfolioDashboard
-            portfolio={portfolio}
-            portfolioData={portfolioData}
-            refresh={refresh}
-            loading={loading}
-            lookup={lookup}
-            setLookup={setLookup}
-            addTicker={addTicker}
-            selectedSources={selectedSources}
-            toggleSource={toggleSource}
-            sourceOptions={sourceOptions}
-            forecastBySelectedSources={forecastBySelectedSources}
-            viewStates={viewStates}
-            toggleViewState={toggleViewState}
+            portfolio={portfolio} portfolioData={portfolioData} refresh={refresh} loading={loading}
+            lookup={lookup} setLookup={setLookup} addTicker={addTicker}
+            selectedSources={selectedSources} toggleSource={toggleSource} sourceOptions={sourceOptions}
+            forecastBySelectedSources={forecastBySelectedSources} viewStates={viewStates} toggleViewState={toggleViewState}
           />
         ) : (
-          <GlobalMarketIntelligence
-            keyword={keyword}
-            setKeyword={setKeyword}
-          />
+          <GlobalMarketIntelligence keyword={keyword} setKeyword={setKeyword} />
         )}
       </main>
     </div>

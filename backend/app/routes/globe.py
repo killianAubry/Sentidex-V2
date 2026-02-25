@@ -21,7 +21,7 @@ def _get_groq_client() -> AsyncGroq:
 # ---------------------------------------------------------------------------
 # Step 1 – Ask Groq to map the supply chain
 # ---------------------------------------------------------------------------
-async def get_supply_chain_nodes(query: str) -> list[dict]:
+async def get_supply_chain_nodes(query: str, node_count: int = 12) -> list[dict]:
     groq_client = _get_groq_client()
     prompt = f"""
 You are a supply chain intelligence analyst.
@@ -36,7 +36,7 @@ Each node must have:
   - "risk_keywords": list of risk keywords to search news for (array of strings)
 
 Return ONLY the raw JSON array, no markdown, no explanation.
-Limit to 12 nodes maximum.
+Limit to {node_count} nodes maximum.
 """
     response = await groq_client.chat.completions.create(
         model="llama-3.3-70b-versatile",  # replaces decommissioned llama3-70b-8192
@@ -191,7 +191,7 @@ Return ONLY raw JSON, no markdown.
 async def get_openbb_data(query: str, client: httpx.AsyncClient) -> dict:
     try:
         r = await client.get(
-            f"{OPENBB_BASE}/equity/search",
+            f"{OPENBB_BASE}/equity/search", # type: ignore
             params={"query": query, "limit": 1},
             timeout=5,
         )
@@ -202,7 +202,7 @@ async def get_openbb_data(query: str, client: httpx.AsyncClient) -> dict:
         if not ticker:
             return {}
         price_r = await client.get(
-            f"{OPENBB_BASE}/equity/price/quote",
+            f"{OPENBB_BASE}/equity/price/quote", # type: ignore
             params={"symbol": ticker},
             timeout=5,
         )
@@ -221,10 +221,10 @@ async def get_openbb_data(query: str, client: httpx.AsyncClient) -> dict:
 # Main endpoint
 # ---------------------------------------------------------------------------
 @router.get("/api/globe-supply-chain")
-async def globe_supply_chain(query: str = "Apple"):
+async def globe_supply_chain(query: str = "Apple", node_count: int = 12):
     async with httpx.AsyncClient() as client:
         # 1. Get nodes from Groq
-        nodes = await get_supply_chain_nodes(query)
+        nodes = await get_supply_chain_nodes(query, node_count)
 
         # 2. Geocode sequentially (rate limited), weather + risk in parallel
         geocoded = await geocode_all_nodes(nodes, client)
