@@ -17,6 +17,14 @@
 - AI global signal panel combining Polymarket + CoinMarketCap effects.
 - Layer toggles and time slider to animate day-by-day conditions.
 
+
+## GMI processing pipeline (updated)
+
+- **Three-agent orchestration per query**: `trade_route`, `country`, and `location` systems are processed independently and merged into a single response.
+- **Provider fallback search stack**: Tavily (primary) → GNews (fallback) → SerpAPI (fallback) for event extraction.
+- **Polymarket-weighted impact modeling**: detected event risk is calibrated with Polymarket probabilities for confidence weighting.
+- **Supply-chain dependency graph output** includes tier-1/tier-2 suppliers, commodity dependencies, and production concentration heatmap points.
+
 ## API highlights
 
 - `GET /api/forecast?ticker=AAPL&keyword=oil&selected_sources=AlphaVantage,Polymarket`
@@ -43,3 +51,12 @@ npm run dev
 ```
 
 Open `http://localhost:5173`.
+
+
+### Optional API keys for GMI
+
+- `TAVILY_API_KEY`
+- `GNEWS_API_KEY`
+- `SERPAPI_API_KEY`
+- `GROQ_API_KEY`
+- `WEATHERAPI_KEY`
