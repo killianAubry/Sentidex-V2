@@ -9,6 +9,9 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from dotenv import load_dotenv
+load_dotenv(Path(__file__).resolve().parents[2] / ".env")
+
 import httpx
 import numpy as np
 import yfinance as yf
@@ -20,10 +23,14 @@ try:
 except ImportError:
     Groq = None
 
+from app.routes.globe import router as globe_router
+
 BASE_DIR = Path(__file__).resolve().parents[1]
 DATA_DIR = BASE_DIR / "data"
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 CACHE_FILE = DATA_DIR / "external_cache.json"
+
+from app.routes.globe import router as globe_router
 
 app = FastAPI(title="Sentidex Pro Forecast API")
 app.add_middleware(
@@ -33,6 +40,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+app.include_router(globe_router)
 
 POSITIVE_WORDS = {
     "beat",

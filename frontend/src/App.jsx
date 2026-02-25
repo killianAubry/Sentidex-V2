@@ -4,7 +4,30 @@ import * as d3geo from 'd3-geo'
 import * as topojson from 'topojson-client'
 import Highcharts from 'highcharts'
 import HighchartsReact from 'highcharts-react-official'
-import HighchartsMore from 'highcharts/highcharts-more'
+import {
+  Building01,
+  Settings01,
+  Anchor,
+  Package,
+  Tool01,
+  Truck01,
+  LayersTwo01,
+  Sun,
+  MarkerPin01,
+  CloudRaining01,
+  Snowflake01,
+  Lightning01,
+  Cloud01,
+  Globe01,
+  AlertTriangle,
+  BarChart01,
+  SearchLg,
+  RefreshCw01,
+  XClose,
+  ChevronDown,
+  Wind01,
+  Thermometer01,
+} from '@untitled-ui/icons-react'
 
 if (typeof HighchartsMore === 'function') {
   HighchartsMore(Highcharts)
@@ -59,7 +82,6 @@ function StockChart({ history = [], forecast = [], valueKey = 'value', separateL
       const val = d.predictedClose || d.value
       return [new Date(d.date).getTime(), val * 0.96, val * 1.04]
     })
-
     const series = [
       {
         name: 'HISTORY',
@@ -93,7 +115,6 @@ function StockChart({ history = [], forecast = [], valueKey = 'value', separateL
         marker: { enabled: false }
       })
     }
-
     separateLines.forEach((line, i) => {
       series.push({
         name: line.name.toUpperCase(),
@@ -106,7 +127,6 @@ function StockChart({ history = [], forecast = [], valueKey = 'value', separateL
         marker: { enabled: false }
       })
     })
-
     return {
       chart: {
         backgroundColor: '#000000',
@@ -169,6 +189,57 @@ const RiskMeter = ({ score }) => {
         <div className="risk-meter-bar" style={{ width: `${score * 100}%`, backgroundColor: color }} />
       </div>
     </div>
+  )
+}
+
+// Untitled UI icon components per node type (sidebar/panels only — NOT used on globe)
+const NODE_ICON_COMPONENTS = {
+  headquarters: Building01,
+  manufacturing: Settings01,
+  port: Anchor,
+  warehouse: Package,
+  supplier: Tool01,
+  distribution: Truck01,
+  mine: LayersTwo01,
+  farm: Sun,
+  default: MarkerPin01,
+}
+
+const WEATHER_ICON_COMPONENTS = {
+  '☀️': Sun,
+  '🌧️': CloudRaining01,
+  '❄️': Snowflake01,
+  '🌩️': Lightning01,
+  '⛅': Cloud01,
+  '🌫️': Wind01,
+  '🌐': Globe01,
+}
+
+function NodeIcon({ type, size = 16, color = 'currentColor', ...props }) {
+  const Icon = NODE_ICON_COMPONENTS[type] || NODE_ICON_COMPONENTS.default
+  return <Icon width={size} height={size} color={color} {...props} />
+}
+
+function WeatherIcon({ icon, size = 14, color = '#60a5fa', ...props }) {
+  const Icon = WEATHER_ICON_COMPONENTS[icon] || Globe01
+  return <Icon width={size} height={size} color={color} {...props} />
+}
+
+const RISK_COLORS = {
+  low: '#22c55e',
+  medium: '#f59e0b',
+  high: '#ef4444',
+  critical: '#7c3aed',
+}
+
+// Simple dot shapes for globe nodes — no icons, no paths, always crisp
+function GlobeDot({ riskColor, isSelected }) {
+  return (
+    <g>
+      <circle r="10" fill="#0f172a" stroke={riskColor} strokeWidth="2" />
+      <circle r="4" fill={riskColor} />
+      {isSelected && <circle r="14" fill="none" stroke={riskColor} strokeWidth="1" opacity="0.5" />}
+    </g>
   )
 }
 
@@ -285,11 +356,11 @@ function PortfolioDashboard({
 
 function GlobalMarketIntelligence({ keyword, setKeyword }) {
   const [data, setData] = useState(null)
-  const [time, setTime] = useState(7)
+  const [loading, setLoading] = useState(false)
   const [selected, setSelected] = useState(null)
-  const [layers, setLayers] = useState({ companies: true, shippingRoutes: true, weather: true, macro: true, aiSignal: true })
+  const [layers, setLayers] = useState({ nodes: true, routes: true, weather: true, risk: true })
   const svgRef = useRef(null)
-  const [rotation, setRotation] = useState([45, -30])
+  const [rotation, setRotation] = useState([0, -30])
   const [scale, setScale] = useState(250)
   const [land, setLand] = useState(null)
 
@@ -303,9 +374,7 @@ function GlobalMarketIntelligence({ keyword, setKeyword }) {
   useEffect(() => {
     fetch('https://cdn.jsdelivr.net/npm/world-atlas@2/land-110m.json')
       .then(r => r.json())
-      .then(world => {
-        setLand(topojson.feature(world, world.objects.land))
-      })
+      .then(world => setLand(topojson.feature(world, world.objects.land)))
   }, [])
 
   const filtered = useMemo(() => {
@@ -342,12 +411,17 @@ function GlobalMarketIntelligence({ keyword, setKeyword }) {
     svg.call(zoom)
   }, [])
 
-  function toggle(k) { setLayers((p) => ({ ...p, [k]: !p[k] })) }
+  function isVisible(lon, lat) {
+    try {
+      const center = projection.invert([width / 2, height / 2])
+      return d3geo.geoDistance(center, [lon, lat]) < Math.PI / 2
+    } catch { return false }
+  }
 
-  const getLinePath = (from, to) => {
-    const start = [from.lon, from.lat]
-    const end = [to.lon, to.lat]
-    return path({ type: 'LineString', coordinates: [start, end] })
+  function getRoutePath(from, to) {
+    try {
+      return path({ type: 'LineString', coordinates: [[from.lon, from.lat], [to.lon, to.lat]] })
+    } catch { return null }
   }
 
   return (
@@ -459,17 +533,10 @@ export function App() {
 
   useEffect(() => {
     const raw = localStorage.getItem(STORAGE_KEY)
-    if (raw) {
-      try {
-        const parsed = JSON.parse(raw)
-        if (Array.isArray(parsed) && parsed.length) setPortfolio(parsed)
-      } catch { }
-    }
+    if (raw) { try { const p = JSON.parse(raw); if (Array.isArray(p) && p.length) setPortfolio(p) } catch { } }
   }, [])
 
-  useEffect(() => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(portfolio))
-  }, [portfolio])
+  useEffect(() => { localStorage.setItem(STORAGE_KEY, JSON.stringify(portfolio)) }, [portfolio])
 
   async function refresh() {
     setLoading(true)
@@ -479,16 +546,11 @@ export function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ positions: portfolio, sentiment_model: 'transformer' })
       })
-      const json = await res.json()
-      setPortfolioData(json)
-    } finally {
-      setLoading(false)
-    }
+      setPortfolioData(await res.json())
+    } finally { setLoading(false) }
   }
 
-  useEffect(() => {
-    if (portfolio.length) refresh()
-  }, [portfolio])
+  useEffect(() => { if (portfolio.length) refresh() }, [portfolio])
 
   return (
     <div className="app-container">
@@ -518,7 +580,6 @@ export function App() {
           <button className={page === 'gmi' ? 'active' : ''} onClick={() => setPage('gmi')}>GMI</button>
         </div>
       </nav>
-
       <main className="main-content">
         {page === 'portfolio' ? (
           <>
@@ -574,10 +635,7 @@ export function App() {
             </aside>
           </>
         ) : (
-          <GlobalMarketIntelligence
-            keyword={keyword}
-            setKeyword={setKeyword}
-          />
+          <GlobalMarketIntelligence keyword={keyword} setKeyword={setKeyword} />
         )}
       </main>
     </div>
