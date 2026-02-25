@@ -3,6 +3,7 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException
 from dotenv import load_dotenv
 from groq import AsyncGroq
+from app.logger import logger
 
 # parents[0] = routes/, parents[1] = app/, parents[2] = backend/ (where .env lives)
 load_dotenv(Path(__file__).resolve().parents[2] / ".env")
@@ -79,6 +80,7 @@ async def geocode_node(node: dict, client: httpx.AsyncClient) -> dict:
         except Exception:
             continue
 
+    logger.warning(f"Geocoding failed for node: {node.get('name')}, {node.get('city')}. Using fallback (0,0).")
     node["lat"] = 0.0
     node["lon"] = 0.0
     return node
@@ -99,6 +101,7 @@ async def geocode_all_nodes(nodes: list[dict], client: httpx.AsyncClient) -> lis
 # ---------------------------------------------------------------------------
 async def get_weather(lat: float, lon: float, client: httpx.AsyncClient) -> dict:
     if not WEATHERAPI_KEY:
+        logger.warning(f"WEATHERAPI_KEY missing. Returning fallback weather for {lat},{lon}")
         return {"condition": "Unknown", "temp_c": None, "icon": "🌐", "wind_kph": None}
     try:
         r = await client.get(
@@ -122,7 +125,8 @@ async def get_weather(lat: float, lon: float, client: httpx.AsyncClient) -> dict
             "wind_kph": d["wind_kph"],
             "icon": icon,
         }
-    except Exception:
+    except Exception as e:
+        logger.warning(f"Weather API call failed for {lat},{lon}: {e}")
         return {"condition": "Unknown", "temp_c": None, "icon": "🌐", "wind_kph": None}
 
 
@@ -150,6 +154,7 @@ async def get_node_risk(node: dict, client: httpx.AsyncClient) -> dict:
             pass
 
     if not headlines:
+        logger.warning(f"No headlines found for risk analysis of node: {node.get('name')}")
         return {"score": 0.3, "level": "low", "summary": "No recent news found.", "headlines": []}
 
     prompt = f"""
@@ -182,7 +187,8 @@ Return ONLY raw JSON, no markdown.
         risk = json.loads(raw)
         risk["headlines"] = headlines
         return risk
-    except Exception:
+    except Exception as e:
+        logger.warning(f"Risk analysis failed for node {node.get('name')}: {e}")
         return {"score": 0.3, "level": "low", "summary": "Analysis unavailable.", "headlines": headlines}
 
 
@@ -219,6 +225,7 @@ async def get_trade_route_impacts(routes: list[dict], query: str, client: httpx.
                 headline_pool = []
 
         if not headline_pool:
+            logger.warning(f"No headlines found for trade route: {route_name}")
             headline_pool = [
                 f"Monitoring route volatility for {route_name} in {query} supply chain",
                 f"No major confirmed closure yet for {route_name}",
@@ -260,6 +267,7 @@ async def get_country_policy_impacts(nodes: list[dict], query: str, client: http
                 headlines = []
 
         if not headlines:
+            logger.warning(f"No headlines found for country policy: {country}")
             headlines = [f"No major confirmed policy shifts detected yet in {country} for {query}."]
 
         policy_score = _keyword_score(" ".join(headlines), policy_terms)
@@ -313,7 +321,8 @@ async def get_polymarket_signals(query: str, countries: list[str], client: httpx
                 "url": f"https://polymarket.com/event/{slug}" if slug else "https://polymarket.com",
             })
         return signals
-    except Exception:
+    except Exception as e:
+        logger.warning(f"Polymarket API call failed for {query}: {e}")
         return [{
             "market": f"No live Polymarket data accessible for {query}; fallback probability weighting applied.",
             "probability": 0.5,
@@ -388,6 +397,7 @@ async def get_openbb_data(query: str, client: httpx.AsyncClient) -> dict:
 # ---------------------------------------------------------------------------
 @router.get("/api/globe-supply-chain")
 async def globe_supply_chain(query: str = "Apple", node_count: int = 12):
+    logger.info(f"Starting supply chain analysis for query: {query}, nodes: {node_count}")
     async with httpx.AsyncClient() as client:
         nodes = await get_supply_chain_nodes(query, node_count)
 
