@@ -635,6 +635,7 @@ function GlobalMarketIntelligence({ keyword, setKeyword }) {
   const [selected, setSelected] = useState(null)
   const [layers, setLayers] = useState({ nodes: true, routes: true, weather: true, risk: true })
   const svgRef = useRef(null)
+  const zoomRef = useRef(null)
   const [rotation, setRotation] = useState([0, -30])
   const [scale, setScale] = useState(250)
   const [land, setLand] = useState(null)
@@ -651,12 +652,37 @@ function GlobalMarketIntelligence({ keyword, setKeyword }) {
   useEffect(() => {
     const svg = d3.select(svgRef.current)
     svg.call(d3.drag().on('drag', (e) =>
-      setRotation(([r0, r1]) => [r0 + e.dx / 2, r1 - e.dy / 2])
+      setRotation(([r0, r1]) => [r0 + e.dx * 0.2, r1 - e.dy * 0.2])
     ))
-    svg.call(d3.zoom().scaleExtent([0.3, 20]).on('zoom', (e) =>
+    const zoom = d3.zoom().scaleExtent([0.8, 8]).on('zoom', (e) =>
       setScale(250 * e.transform.k)
-    ))
+    )
+    zoomRef.current = zoom
+    svg.call(zoom)
   }, [])
+
+  useEffect(() => {
+    if (!selected) return
+    const target = [-selected.lon, -selected.lat + 20]
+    const i = d3.interpolate(rotation, target)
+    const timer = d3.timer((t) => {
+      if (t >= 700) {
+        setRotation(target)
+        timer.stop()
+      } else {
+        setRotation(i(t / 700))
+      }
+    })
+    return () => timer.stop()
+  }, [selected])
+
+  const handleResetView = () => {
+    setRotation([0, -30])
+    setScale(250)
+    if (zoomRef.current && svgRef.current) {
+      d3.select(svgRef.current).transition().duration(700).call(zoomRef.current.transform, d3.zoomIdentity)
+    }
+  }
 
   async function runSearch(q) {
     // Check cache first
@@ -822,6 +848,13 @@ function GlobalMarketIntelligence({ keyword, setKeyword }) {
           </svg>
 
           <div style={{ position: 'absolute', bottom: '1rem', left: '1rem', display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+            <button onClick={handleResetView}
+              style={{
+                padding: '0.25rem 0.6rem', fontSize: '0.7rem', borderRadius: '999px',
+                background: '#1e293b', border: '1px solid #334155', color: 'white', cursor: 'pointer'
+              }}>
+              Reset View
+            </button>
             {Object.keys(layers).map(k => (
               <button key={k} onClick={() => setLayers(p => ({ ...p, [k]: !p[k] }))}
                 style={{
