@@ -223,7 +223,6 @@ async def get_openbb_data(query: str, client: httpx.AsyncClient) -> dict:
 @router.get("/api/globe-supply-chain")
 async def globe_supply_chain(query: str = "Apple", node_count: int = 12):
     async with httpx.AsyncClient() as client:
-        # 1. Get nodes from Groq
         nodes = await get_supply_chain_nodes(query, node_count)
 
         # 2. Geocode sequentially (rate limited), weather + risk in parallel

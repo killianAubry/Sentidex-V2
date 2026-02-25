@@ -24,6 +24,7 @@ except ImportError:
     Groq = None
 
 from app.routes.globe import router as globe_router
+from app.routes.insider import router as insider_router
 
 BASE_DIR = Path(__file__).resolve().parents[1]
 DATA_DIR = BASE_DIR / "data"
@@ -42,6 +43,7 @@ app.add_middleware(
 )
 
 app.include_router(globe_router)
+app.include_router(insider_router)
 
 POSITIVE_WORDS = {
     "beat",
