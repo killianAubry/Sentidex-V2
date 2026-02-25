@@ -25,6 +25,7 @@ except ImportError:
 
 from app.routes.globe import router as globe_router
 from app.routes.insider import router as insider_router
+from app.routes.policy_intelligence import router as policy_intelligence_router
 
 BASE_DIR = Path(__file__).resolve().parents[1]
 DATA_DIR = BASE_DIR / "data"
@@ -44,6 +45,7 @@ app.add_middleware(
 
 app.include_router(globe_router)
 app.include_router(insider_router)
+app.include_router(policy_intelligence_router)
 
 POSITIVE_WORDS = {
     "beat",
