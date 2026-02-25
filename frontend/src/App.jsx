@@ -189,8 +189,11 @@ function GlobalMarketIntelligence({ data, loading, rotation, setRotation, select
   )
   const path = useMemo(() => d3geo.geoPath(projection), [projection])
 
-  // Shrink dots as zoom increases so they don't overlap; clamp between 0.4 and 1.0
-  const dotScale = useMemo(() => Math.min(1.0, Math.max(0.4, 250 / scale)), [scale])
+  // Divisor interpolates from 400 (fully zoomed out) to 3000 (fully zoomed in)
+  const dotScale = useMemo(() => {
+    const divisor = 400 + (scale - 400) * (3000 - 400) / (2000 - 400)
+    return scale / divisor
+  }, [scale])
 
   function isVisible(lon, lat) {
     try {
