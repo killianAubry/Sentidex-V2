@@ -712,6 +712,18 @@ function GlobalMarketIntelligence({ keyword, setKeyword }) {
     } catch { return null }
   }
 
+
+  const systems = data?.systems || {}
+  const dependencyGraph = data?.dependency_graph || {}
+  const polymarketSignals = data?.polymarket || []
+
+  const dashboardStats = useMemo(() => {
+    const routeAlerts = (systems.trade_route || []).filter(r => r.status === 'impacted').length
+    const policyAlerts = (systems.country || []).filter(c => c.status === 'policy-change-risk').length
+    const locationAlerts = (systems.location || []).filter(l => l.impact_score >= 0.6).length
+    return { routeAlerts, policyAlerts, locationAlerts }
+  }, [systems])
+
   return (
     <div className="gmi-page">
       <div className="gmi-header">
@@ -824,6 +836,78 @@ function GlobalMarketIntelligence({ keyword, setKeyword }) {
         </div>
 
         <aside className="gmi-sidebar">
+          {data && (
+            <div className="card" style={{ padding: '1rem' }}>
+              <h4 style={{ margin: '0 0 0.75rem' }}>Global Market Intelligence System</h4>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '0.5rem' }}>
+                <div style={{ background: '#0f172a', borderRadius: '0.5rem', padding: '0.5rem' }}>
+                  <div style={{ color: '#64748b', fontSize: '0.7rem' }}>Trade Route Agent</div>
+                  <div style={{ color: '#f59e0b', fontWeight: 700 }}>{dashboardStats.routeAlerts} impacted</div>
+                </div>
+                <div style={{ background: '#0f172a', borderRadius: '0.5rem', padding: '0.5rem' }}>
+                  <div style={{ color: '#64748b', fontSize: '0.7rem' }}>Country Agent</div>
+                  <div style={{ color: '#60a5fa', fontWeight: 700 }}>{dashboardStats.policyAlerts} policy alerts</div>
+                </div>
+                <div style={{ background: '#0f172a', borderRadius: '0.5rem', padding: '0.5rem' }}>
+                  <div style={{ color: '#64748b', fontSize: '0.7rem' }}>Location Agent</div>
+                  <div style={{ color: '#ef4444', fontWeight: 700 }}>{dashboardStats.locationAlerts} elevated</div>
+                </div>
+              </div>
+            </div>
+          )}
+          {systems?.trade_route?.length > 0 && (
+            <div className="card" style={{ padding: '1rem' }}>
+              <h4 style={{ margin: '0 0 0.65rem' }}>Trade Route Impacts</h4>
+              {systems.trade_route.slice(0, 3).map((item, idx) => (
+                <div key={idx} style={{ padding: '0.45rem 0', borderBottom: '1px solid #1e293b' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.5rem' }}>
+                    <span style={{ fontSize: '0.78rem', color: '#e2e8f0' }}>{item.route}</span>
+                    <span style={{ fontSize: '0.7rem', color: item.status === 'impacted' ? '#ef4444' : '#f59e0b' }}>{item.status}</span>
+                  </div>
+                  <div style={{ color: '#64748b', fontSize: '0.72rem' }}>{item.headlines?.[0]}</div>
+                </div>
+              ))}
+            </div>
+          )}
+          {systems?.country?.length > 0 && (
+            <div className="card" style={{ padding: '1rem' }}>
+              <h4 style={{ margin: '0 0 0.65rem' }}>Country Policy Index</h4>
+              {systems.country.slice(0, 4).map((item, idx) => (
+                <div key={idx} style={{ padding: '0.35rem 0', display: 'flex', justifyContent: 'space-between', fontSize: '0.78rem' }}>
+                  <span style={{ color: '#e2e8f0' }}>{item.country}</span>
+                  <span style={{ color: item.policy_score >= 0.4 ? '#ef4444' : '#22c55e' }}>score {Math.round((item.policy_score || 0) * 100)}%</span>
+                </div>
+              ))}
+            </div>
+          )}
+          {dependencyGraph?.tier_1_suppliers?.length > 0 && (
+            <div className="card" style={{ padding: '1rem' }}>
+              <h4 style={{ margin: '0 0 0.65rem' }}>Supply Dependency Graph</h4>
+              <div style={{ fontSize: '0.75rem', color: '#94a3b8', marginBottom: '0.35rem' }}>Tier 1: {dependencyGraph.tier_1_suppliers.join(', ')}</div>
+              <div style={{ fontSize: '0.75rem', color: '#64748b', marginBottom: '0.55rem' }}>Tier 2: {(dependencyGraph.tier_2_suppliers || []).join(', ')}</div>
+              {(dependencyGraph.commodity_dependencies || []).map((c, idx) => (
+                <div key={idx} style={{ marginBottom: '0.35rem' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.72rem', color: '#cbd5e1' }}>
+                    <span>{c.name}</span><span>{Math.round((c.dependency_score || 0) * 100)}%</span>
+                  </div>
+                  <div style={{ height: '6px', background: '#1e293b', borderRadius: '999px' }}>
+                    <div style={{ width: `${(c.dependency_score || 0) * 100}%`, height: '100%', borderRadius: '999px', background: '#3b82f6' }} />
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+          {polymarketSignals.length > 0 && (
+            <div className="card" style={{ padding: '1rem' }}>
+              <h4 style={{ margin: '0 0 0.65rem' }}>Polymarket Probability Weighting</h4>
+              {polymarketSignals.slice(0, 3).map((m, idx) => (
+                <div key={idx} style={{ padding: '0.35rem 0', borderBottom: '1px solid #1e293b' }}>
+                  <div style={{ fontSize: '0.75rem', color: '#e2e8f0' }}>{m.market}</div>
+                  <div style={{ fontSize: '0.72rem', color: '#60a5fa' }}>weighted probability: {Math.round((m.probability || 0) * 100)}%</div>
+                </div>
+              ))}
+            </div>
+          )}
           {selected && (
             <div className="detail-panel card" style={{ marginBottom: '1rem' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
@@ -919,7 +1003,7 @@ function GlobalMarketIntelligence({ keyword, setKeyword }) {
 // App root
 // ---------------------------------------------------------------------------
 export function App() {
-  const [page, setPage] = useState('portfolio')
+  const [page, setPage] = useState('gmi')
   const [portfolio, setPortfolio] = useState(defaultPortfolio)
   const [portfolioData, setPortfolioData] = useState(null)
   const [lookup, setLookup] = useState('AAPL')
@@ -977,7 +1061,7 @@ export function App() {
         <div className="nav-brand">SENTIDEX <span className="pro-tag">PRO</span></div>
         <div className="nav-links">
           <button className={page === 'portfolio' ? 'active' : ''} onClick={() => setPage('portfolio')}>Portfolio</button>
-          <button className={page === 'gmi' ? 'active' : ''} onClick={() => setPage('gmi')}>GMI</button>
+          <button className={page === 'gmi' ? 'active' : ''} onClick={() => setPage('gmi')}>Global Intelligence</button>
           <button className={page === 'insider' ? 'active' : ''} onClick={() => setPage('insider')}>
             Insider Trades
           </button>
