@@ -30,6 +30,7 @@ async def get_supply_chain_nodes(query: str, node_count: int = 12) -> list[dict]
     prompt = f"""
 You are a supply chain intelligence analyst.
 For the query "{query}", return a JSON array of the most important supply chain nodes.
+Prioritize nodes that are critical bottlenecks, high-risk manufacturing hubs, or key transit points (canals, major ports) prone to disruption.
 Each node must have:
   - "name": place or facility name (string)
   - "type": one of [headquarters, manufacturing, port, warehouse, supplier, distribution, mine, farm]
@@ -139,33 +140,19 @@ async def get_node_risk(node: dict, client: httpx.AsyncClient) -> dict:
     keywords = node.get("risk_keywords", [node.get("name", ""), node.get("country", "")])
     keyword_str = " OR ".join(keywords[:3])
 
-    # Try GNews
-    gnews_key = os.getenv("GNEWS_API_KEY", "")
-    headlines = []
-    if gnews_key:
-        try:
-            r = await client.get(
-                "https://gnews.io/api/v4/search",
-                params={"q": keyword_str, "lang": "en", "max": 5,
-                        "apikey": gnews_key},
-                timeout=6,
-            )
-            articles = r.json().get("articles", [])
-            headlines = [a["title"] for a in articles]
-        except Exception:
-            pass
+    headlines = await search_web_events(keyword_str, client)
 
     if not headlines:
         logger.warning(f"No headlines found for risk analysis of node: {node.get('name')}")
-        return {"score": 0.3, "level": "low", "summary": "No recent news found.", "headlines": []}
 
     prompt = f"""
 You are a geopolitical risk analyst.
 Node: {node['name']} ({node['type']}) in {node['city']}, {node['country']}
 Role: {node['role']}
 Recent headlines:
-{chr(10).join(f'- {h}' for h in headlines)}
+{chr(10).join(f'- {h}' for h in headlines) if headlines else "No recent headlines found."}
 
+If headlines are empty, evaluate the inherent geopolitical and operational risks associated with a {node.get('type')} in {node.get('country')}, focusing on its role as {node.get('role')}.
 Return a JSON object with:
   - "score": float 0.0 (no risk) to 1.0 (critical risk)
   - "level": one of [low, medium, high, critical]
@@ -197,10 +184,10 @@ Return ONLY raw JSON, no markdown.
 def _keyword_score(text: str, keywords: list[str]) -> float:
     lowered = text.lower()
     hits = sum(1 for k in keywords if k in lowered)
-    return min(1.0, hits / max(len(keywords), 1))
+    return min(1.0, hits / 2.0)
 
 
-async def search_web_events(query: str, client: httpx.AsyncClient, max_results: int = 5) -> list[str]:
+async def search_web_events(query: str, client: httpx.AsyncClient, max_results: int = 5, is_fallback: bool = False) -> list[str]:
     """Search web events with provider priority: Tavily -> GNews -> SerpAPI."""
     if TAVILY_API_KEY:
         try:
@@ -249,6 +236,11 @@ async def search_web_events(query: str, client: httpx.AsyncClient, max_results: 
         except Exception as e:
             logger.warning(f"SerpAPI search failed for query='{query}': {e}")
 
+    # Fallback to a broader query if nothing found
+    if not is_fallback and " " in query:
+        broad_query = " ".join(query.split()[-2:]) + " disruption"
+        return await search_web_events(broad_query, client, max_results=2, is_fallback=True)
+
     return []
 
 
@@ -287,8 +279,9 @@ async def get_trade_route_impacts(routes: list[dict], query: str, client: httpx.
     route_impacts = []
     for route in top_routes:
         route_name = f"{route['from']['name']} ↔ {route['to']['name']}"
+        search_query = f"{route['from'].get('city')} {route['from'].get('country')} {route['to'].get('city')} {route['to'].get('country')} shipping route disruption"
         headline_pool = await search_web_events(
-            f"{route['from']['name']} {route['to']['name']} shipping route disruption OR canal OR port",
+            search_query,
             client,
             max_results=4,
         )
@@ -501,8 +494,14 @@ async def globe_supply_chain(query: str = "Apple", node_count: int = 12):
                     seen.add(key)
                     target = enriched[name_to_idx[conn]]
                     routes.append({
-                        "from": {"name": node["name"], "lat": node["lat"], "lon": node["lon"]},
-                        "to": {"name": target["name"], "lat": target["lat"], "lon": target["lon"]},
+                        "from": {
+                            "name": node["name"], "lat": node["lat"], "lon": node["lon"],
+                            "city": node.get("city"), "country": node.get("country")
+                        },
+                        "to": {
+                            "name": target["name"], "lat": target["lat"], "lon": target["lon"],
+                            "city": target.get("city"), "country": target.get("country")
+                        },
                         "risk": max(node["risk"]["score"], target["risk"]["score"]),
                     })
 

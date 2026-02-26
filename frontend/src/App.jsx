@@ -108,6 +108,86 @@ function WeatherIcon({ icon, size = 14, color = '#60a5fa', ...props }) {
 
 const RISK_COLORS = { low: '#22c55e', medium: '#f59e0b', high: '#ef4444', critical: '#7c3aed' }
 
+function IntelligenceInsights({ systems, polymarket }) {
+  if (!systems) return null
+  return (
+    <div className="insights-panel">
+      <div className="insights-section">
+        <h3 className="section-title"><Truck01 size={18} /> Trade Route Disruptions</h3>
+        <div className="insights-grid">
+          {systems.trade_route?.map((r, i) => (
+            <div key={i} className={`insight-card ${r.status}`}>
+              <div className="insight-header">
+                <span className="insight-name">{r.route}</span>
+                <span className={`status-badge ${r.status}`}>{r.status}</span>
+              </div>
+              <p className="insight-reason">{r.reason}</p>
+              {r.headlines?.length > 0 && (
+                <div className="insight-headlines">
+                  {r.headlines.map((h, j) => <div key={j} className="mini-headline">· {h}</div>)}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="insights-section">
+        <h3 className="section-title"><Globe01 size={18} /> Geopolitical Policy Shifts</h3>
+        <div className="insights-grid">
+          {systems.country?.map((c, i) => (
+            <div key={i} className={`insight-card ${c.status}`}>
+              <div className="insight-header">
+                <span className="insight-name">{c.country}</span>
+                <span className={`status-badge ${c.status}`}>{c.status}</span>
+              </div>
+              <p className="insight-reason">{c.summary}</p>
+              {c.headlines?.length > 0 && (
+                <div className="insight-headlines">
+                  {c.headlines.map((h, j) => <div key={j} className="mini-headline">· {h}</div>)}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="insights-section">
+        <h3 className="section-title"><MarkerPin01 size={18} /> Location Signals</h3>
+        <div className="insights-grid">
+          {systems.location?.map((l, i) => (
+            <div key={i} className="insight-card">
+              <div className="insight-header">
+                <span className="insight-name">{l.node}</span>
+                <span className="category-badge">{l.event_category}</span>
+              </div>
+              <div className="insight-sub">{l.location}</div>
+              <p className="insight-reason">{l.summary}</p>
+              <RiskMeter score={l.impact_score} />
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {polymarket?.length > 0 && (
+        <div className="insights-section">
+          <h3 className="section-title"><TrendUp01 size={18} /> Polymarket Sentiment</h3>
+          <div className="insights-grid">
+            {polymarket.map((m, i) => (
+              <div key={i} className="insight-card">
+                <div className="insight-header">
+                  <a href={m.url} target="_blank" rel="noreferrer" className="insight-name link">{m.market}</a>
+                </div>
+                <div className="market-stat">Probability: {(m.probability * 100).toFixed(0)}%</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
 function GlobeDot({ riskColor, isSelected, dotScale = 1 }) {
   const r1 = 10 * dotScale
   const r2 = 4 * dotScale
@@ -319,6 +399,7 @@ export function App() {
   const [keyword, setKeyword] = useState('Apple')
   const [gmiData, setGmiData] = useState(null)
   const [gmiLoading, setGmiLoading] = useState(false)
+  const [showInsights, setShowInsights] = useState(true)
   const [inputVal, setInputVal] = useState('Apple')
   const [nodeCount, setNodeCount] = useState(12)
   const [cacheInfo, setCacheInfo] = useState(null)
@@ -329,7 +410,14 @@ export function App() {
   const zoomRef = useRef(null)
 
   const stats = useMemo(() => {
-    const issues = (gmiData?.nodes || []).filter(n => (n.risk?.score || 0) > 0.4).length
+    if (!gmiData || gmiData.detail) return { issues: 0, exposure: "0.0", atRisk: "$0.00" }
+    let issues = (gmiData.nodes || []).filter(n => (n.risk?.score || 0) > 0.45).length
+    if (gmiData.systems) {
+      const routeIssues = (gmiData.systems.trade_route || []).filter(r => r.impact_score > 0.5).length
+      const countryIssues = (gmiData.systems.country || []).filter(c => c.policy_score > 0.45).length
+      const locIssues = (gmiData.systems.location || []).filter(l => l.impact_score > 0.5).length
+      issues += (routeIssues + countryIssues + locIssues)
+    }
     const pos = (portfolioData?.positions || []).find(p => 
       p.ticker.toLowerCase() === keyword.toLowerCase() || 
       (gmiData?.query || "").toLowerCase().includes(p.ticker.toLowerCase())
@@ -369,11 +457,16 @@ export function App() {
     try {
       const r = await fetch(`/api/globe-supply-chain?query=${encodeURIComponent(q)}&node_count=${nodeCount}`)
       const j = await r.json()
-      setGmiData(j)
-      setKeyword(q)
-      gmiCacheSet(q, nodeCount, j)
-      setCacheInfo('fresh')
-      if (j.nodes?.length) setSelected(j.nodes[0])
+      if (r.status !== 200) {
+        setGmiData({ ...j, isError: true })
+        setCacheInfo('error')
+      } else {
+        setGmiData(j)
+        setKeyword(q)
+        gmiCacheSet(q, nodeCount, j)
+        setCacheInfo('fresh')
+        if (j.nodes?.length) setSelected(j.nodes[0])
+      }
     } catch (e) {
       console.error(e)
     } finally {
@@ -432,8 +525,24 @@ export function App() {
           </div>
         </div>
 
+        <div className="insights-toggle-container">
+          <button className={`insights-toggle-btn ${showInsights ? 'active' : ''}`} onClick={() => setShowInsights(!showInsights)}>
+            {showInsights ? 'Hide Intelligence Insights' : 'Show Intelligence Insights'}
+          </button>
+        </div>
+
+        {gmiData?.isError && (
+          <div className="error-banner" style={{ textAlign: 'center', color: '#ef4444', marginBottom: '1rem' }}>
+            API Error: {gmiData.detail || 'Failed to fetch supply chain data'}
+          </div>
+        )}
+
+        {showInsights && gmiData && !gmiData.isError && (
+          <IntelligenceInsights systems={gmiData.systems} polymarket={gmiData.polymarket} />
+        )}
+
         <GlobalMarketIntelligence 
-          data={gmiData} loading={gmiLoading}
+          data={gmiData && !gmiData.isError ? gmiData : null} loading={gmiLoading}
           rotation={rotation} setRotation={setRotation}
           selected={selected} setSelected={setSelected}
           scale={scale} setScale={setScale}
